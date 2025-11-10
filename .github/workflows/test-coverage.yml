@@ -11,6 +11,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Explicit permissions for security (principle of least privilege)
+permissions:
+  contents: read  # To checkout code
+
 jobs:
   test-coverage:
     name: Test Suite & Coverage (Python ${{ matrix.python-version }})
