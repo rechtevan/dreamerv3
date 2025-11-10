@@ -183,7 +183,8 @@ xdg-open .local/htmlcov/index.html  # Linux
 
 ### Coverage Scope (What's Measured)
 
-Coverage targets (**80-90%+**) apply to **core production code only**:
+Coverage targets (**90% overall, 80% minimum per module/function/class**) apply to
+**core production code only**:
 
 ✅ **Production code requiring coverage:**
 
@@ -734,8 +735,9 @@ ______________________________________________________________________
 
 **Repository**: `rechtevan/dreamerv3` (fork of `danijar/dreamerv3`) **License**: MIT
 License **Language**: Python 3.11+ **Framework**: JAX, Optax, Ninjax **Test Framework**:
-pytest **Linting**: Ruff, MyPy **Coverage Target**: 80-90%+ for core production code
-**Code Style**: Black-compatible (88 char line length)
+pytest **Linting**: Ruff, MyPy **Coverage Target**: 90% overall (80% minimum per
+module/function/class) for core production code **Code Style**: Black-compatible (88
+char line length)
 
 **Key Files**:
 

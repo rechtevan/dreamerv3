@@ -64,12 +64,17 @@ ______________________________________________________________________
 
 ## Coverage Goals
 
+**Project Goal**: 90% overall coverage with 80% minimum per module/function/class
+
 | Phase          | Target   | Current | Gap      |
 | -------------- | -------- | ------- | -------- |
-| Core Algorithm | 80%+     | 0%      | +80%     |
-| JAX Modules    | 60%+     | 26%     | +34%     |
-| Training Loops | 40%+     | 6%      | +34%     |
-| **Overall**    | **56%+** | **26%** | **+30%** |
+| Core Algorithm | 90%+     | 0%      | +90%     |
+| JAX Modules    | 90%+     | 26%     | +64%     |
+| Training Loops | 90%+     | 6%      | +84%     |
+| Core Infra     | 90%+     | 58%     | +32%     |
+| **Overall**    | **90%+** | **26%** | **+64%** |
+
+**Minimum Acceptable**: 80% coverage per module/function/class
 
 ______________________________________________________________________
 
