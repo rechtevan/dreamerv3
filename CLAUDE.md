@@ -465,6 +465,74 @@ ______________________________________________________________________
 
 ## Development Guidelines
 
+### Documentation Standards
+
+**Python Docstring Format**: Use **Google-style docstrings** for consistency with JAX/ML
+ecosystem.
+
+All public modules, classes, functions, and methods should include docstrings with:
+
+- **Brief description** (one-line summary)
+- **Args** section for parameters (with types if not obvious from type hints)
+- **Returns** section for return values
+- **Raises** section for exceptions (if applicable)
+- **Examples** section for complex APIs (optional but encouraged)
+
+**Example:**
+
+```python
+def lambda_return(rewards, values, continues, gamma, lam):
+    """Compute λ-returns for temporal difference learning.
+
+    Computes bootstrapped returns using TD(λ) with GAE-style advantages.
+    Uses geometric weighting between one-step and Monte Carlo returns.
+
+    Args:
+        rewards: Predicted rewards for each timestep, shape [T, B]
+        values: State value estimates, shape [T+1, B]
+        continues: Episode continuation flags (0=terminal, 1=continue), shape [T, B]
+        gamma: Discount factor for future rewards (typically 0.99)
+        lam: λ parameter for return mixing (typically 0.95)
+
+    Returns:
+        λ-returns for each timestep, shape [T, B]
+
+    Raises:
+        ValueError: If shapes are incompatible
+    """
+    # Implementation...
+```
+
+**Documentation Generation**: Use **Sphinx** for API documentation:
+
+```bash
+# Install sphinx
+pip install sphinx sphinx-rtd-theme
+
+# Generate docs (future task)
+cd docs/
+sphinx-build -b html source build
+```
+
+**Coverage Requirement**: New code should include docstrings for all:
+
+- Public classes and their `__init__` methods
+- Public functions and methods (excluding obvious property getters)
+- Module-level docstrings explaining purpose
+
+**Existing Code**: Incrementally add docstrings during:
+
+- Bug fixes (document the function being fixed)
+- Feature additions (document new and related code)
+- Refactoring (document affected areas)
+
+**NOT Required**:
+
+- Private methods (prefix `_`) unless complex
+- Test files (use descriptive test names instead)
+- Trivial property getters/setters
+- Self-explanatory one-liners
+
 ### Adding New Environments
 
 1. Create wrapper in `embodied/envs/` implementing `embodied.Env` interface:
