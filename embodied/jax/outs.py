@@ -198,7 +198,7 @@ class Binary(Output):
 
     def sample(self, seed, shape=()):
         prob = jax.nn.sigmoid(self.logit)
-        return jax.random.bernoulli(seed, prob, -1, shape + self.logit.shape)
+        return jax.random.bernoulli(seed, prob, shape=shape + self.logit.shape)
 
 
 class Categorical(Output):
