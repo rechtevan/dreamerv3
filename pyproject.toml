@@ -1,0 +1,274 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dreamerv3"
+version = "3.3.1"
+description = "Mastering Diverse Domains through World Models"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Danijar Hafner", email = "mail@danijar.com"},
+]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "ale_py==0.9.0",
+    "autorom[accept-rom-license]==0.6.1",
+    "av",
+    "chex",
+    "colored_traceback",
+    "einops",
+    "elements>=3.19.1",
+    "google-resumable-media>=2.7.2",
+    "granular>=0.20.3",
+    "ipdb",
+    "jax[cuda12]==0.4.33",
+    "jaxtyping",
+    "ninjax>=3.5.1",
+    "numpy<2",
+    "nvidia-cuda-nvcc-cu12<=12.2",
+    "optax",
+    "portal>=3.5.0",
+    "scope>=0.4.4",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+# Development dependencies for testing, linting, and code quality
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-xdist",  # Parallel test execution
+    "ruff>=0.9.0",
+    "mypy>=1.14.0",
+    "pre-commit>=3.0.0",
+    "mdformat>=0.7.21",
+    "mdformat-gfm",  # GitHub Flavored Markdown
+    "mdformat-black",  # Format Python code blocks
+    "mdformat-config",  # Read config from .mdformat.toml
+    "pymarkdownlnt>=0.9.0",
+    "types-tqdm",  # Type stubs for tqdm
+    "pip-licenses",  # Check dependency licenses
+]
+
+# Visualization and interactive tools
+viz = [
+    "matplotlib",
+    "pillow",
+    "pygame",
+]
+
+# All optional dependencies
+all = [
+    "dreamerv3[dev,viz]",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/danijar/dreamerv3"
+"Fork" = "https://github.com/rechtevan/dreamerv3"
+"Bug Tracker" = "https://github.com/danijar/dreamerv3/issues"
+
+[tool.setuptools.packages.find]
+include = ["dreamerv3*", "embodied*"]
+
+# Ruff configuration - Fast Python linter and formatter
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+extend-exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "*.egg-info",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "build",
+    "dist",
+    ".local",
+    "scores",  # Visualization utilities
+]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "SIM",    # flake8-simplify
+    "RUF",    # Ruff-specific rules
+]
+
+ignore = [
+    "E501",    # Line too long (handled by formatter)
+    "B008",    # Function call in argument defaults
+    "B905",    # zip without explicit strict parameter
+    "N803",    # Argument name should be lowercase (conflicts with JAX conventions)
+    "N806",    # Variable in function should be lowercase (conflicts with JAX conventions)
+    "SIM108",  # Use ternary operator (sometimes less readable)
+]
+
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests can have unused imports and variables
+"embodied/tests/**/*.py" = ["F401", "F841"]
+"embodied/perf/**/*.py" = ["F401", "F841"]
+# Plot and visualization scripts
+"plot.py" = ["E402", "F401"]
+"scores/view.py" = ["E402", "F401"]
+
+[tool.ruff.lint.isort]
+force-single-line = false
+lines-after-imports = 2
+known-first-party = ["dreamerv3", "embodied"]
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "first-party",
+    "local-folder"
+]
+
+# MyPy configuration - Static type checking
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # Gradual typing
+disallow_incomplete_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+show_error_codes = true
+
+# Ignore missing imports for third-party libraries
+[[tool.mypy.overrides]]
+module = [
+    "jax.*",
+    "jaxlib.*",
+    "optax.*",
+    "chex.*",
+    "ninjax.*",
+    "einops.*",
+    "elements.*",
+    "embodied.*",
+    "portal.*",
+    "granular.*",
+    "scope.*",
+    "av.*",
+    "ale_py.*",
+    "autorom.*",
+    "dm_control.*",
+    "crafter.*",
+    "procgen.*",
+    "minerl.*",
+]
+ignore_missing_imports = true
+
+# Ignore errors in visualization and interactive modules
+[[tool.mypy.overrides]]
+module = [
+    "plot",
+    "scores.view",
+]
+ignore_errors = true
+
+# Pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["embodied/tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+    "--disable-warnings",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+# Coverage configuration
+[tool.coverage.run]
+source = ["dreamerv3", "embodied"]
+omit = [
+    # Test files
+    "*/tests/*",
+    "*/perf/*",
+    "*_test.py",
+    # Visualization utilities (tested manually)
+    "plot.py",
+    "scores/view.py",
+    "*/viz/*",
+    "*visualizer.py",
+    "*_viz.py",
+    # Interactive modules (not for automated testing)
+    "*/interactive.py",
+    "*/manual_*.py",
+    # Setup files
+    "setup.py",
+    "*/setup.py",
+    # Docker entrypoint
+    "entrypoint.sh",
+]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_empty = true
+sort = "Cover"
+exclude_lines = [
+    "pragma: no cover",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+    "@abc.abstractmethod",
+    "if typing.TYPE_CHECKING:",
+    '\.\.\.', # Ellipsis for abstract methods
+]
+
+[tool.coverage.html]
+directory = ".local/htmlcov"
+
+[tool.coverage.json]
+output = ".local/coverage.json"
+
+[tool.coverage.xml]
+output = ".local/coverage.xml"
+
+# Markdown formatting configuration
+[tool.mdformat]
+wrap = 88
+number = true
+end_of_line = "lf"
