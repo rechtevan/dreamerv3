@@ -7,5 +7,8 @@ try:
 except ImportError:
     pass
 
-from . import envs, jax, run
-from .core import *
+# Import .core first to make Agent base class available before jax module loads
+# The import order is critical: .core must be imported before .jax to avoid circular import
+# ruff: noqa: I001
+from .core import *  # Must be first - provides embodied.Agent base class
+from . import envs, jax, run  # Requires embodied.Agent to be defined

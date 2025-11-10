@@ -3,24 +3,13 @@ Tests for dreamerv3.agent - Agent training and policy
 
 Coverage goal: 90% (starting with ~20-30% foundational tests)
 
-NOTE: These tests are currently skipped due to a circular import in the codebase:
-- embodied/__init__.py imports embodied.jax
-- embodied/jax/__init__.py imports embodied.jax.agent.Agent
-- embodied/jax/agent.py uses embodied.Agent (base class)
-- But embodied module hasn't finished loading yet!
-
-This needs to be fixed in the codebase before these tests can run.
-See Issue #8 for tracking.
+Note: Agent is imported inside test methods to avoid circular import issues
 """
 
 import elements
 import jax
 import numpy as np
 import pytest
-
-
-# Skip all tests in this module due to circular import
-pytestmark = pytest.mark.skip(reason="Circular import prevents loading dreamerv3.agent")
 
 
 class TestAgent:
@@ -181,6 +170,19 @@ class TestAgent:
             actor_grad="dynamics",
             critic_type="vpredict",
             slow_critic_update=1.0,
+            # JAX configuration
+            jax=dict(
+                platform="cpu",
+                compute_dtype="bfloat16",
+                policy_devices=[0],
+                train_devices=[0],
+                mock_devices=0,
+                prealloc=False,
+                jit=True,
+                debug=False,
+                expect_devices=0,
+                enable_policy=True,
+            ),
         )
 
     @pytest.fixture

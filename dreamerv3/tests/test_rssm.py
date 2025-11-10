@@ -2,15 +2,6 @@
 Tests for dreamerv3.rssm - World Model (RSSM, Encoder, Decoder)
 
 Coverage goal: 90% (starting with ~20-30% foundational tests)
-
-NOTE: These tests are currently skipped due to a circular import in the codebase:
-- embodied/__init__.py imports embodied.jax
-- embodied/jax/__init__.py imports embodied.jax.agent.Agent
-- embodied/jax/agent.py uses embodied.Agent (base class)
-- But embodied module hasn't finished loading yet!
-
-This needs to be fixed in the codebase before these tests can run.
-See Issue #8 for tracking.
 """
 
 import elements
@@ -19,10 +10,6 @@ import jax.numpy as jnp
 import ninjax as nj
 import numpy as np
 import pytest
-
-
-# Skip all tests in this module due to circular import
-pytestmark = pytest.mark.skip(reason="Circular import prevents loading dreamerv3.rssm")
 
 
 class TestRSSM:
@@ -61,6 +48,7 @@ class TestRSSM:
             stoch=8,
             classes=8,
             blocks=8,
+            name="test_rssm",
         )
         assert module.deter == 256
         assert module.hidden == 128
@@ -78,6 +66,7 @@ class TestRSSM:
                 act_space,
                 deter=256,  # Not divisible by 7
                 blocks=7,
+                name="test_invalid_rssm",
             )
 
     def test_entry_space(self, rssm_module):
@@ -99,8 +88,9 @@ class TestRSSM:
         assert "stoch" in carry
         assert carry["deter"].shape == (batch_size, 256)
         assert carry["stoch"].shape == (batch_size, 8, 8)
-        assert carry["deter"].dtype == jnp.float32
-        assert carry["stoch"].dtype == jnp.float32
+        # Default dtype is bfloat16 (from JAX config)
+        assert carry["deter"].dtype == jnp.bfloat16
+        assert carry["stoch"].dtype == jnp.bfloat16
 
         # Initial state should be zeros
         assert jnp.allclose(carry["deter"], 0.0)
