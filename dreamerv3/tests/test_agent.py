@@ -16,9 +16,15 @@ class TestAgent:
     """Tests for DreamerV3 Agent"""
 
     @pytest.fixture
-    def minimal_config(self):
+    def minimal_config(self, tmp_path):
         """Minimal configuration for testing"""
         return elements.Config(
+            # Required paths and settings
+            logdir=str(tmp_path / "logdir"),
+            batch_size=4,
+            batch_length=16,
+            report_length=32,
+            seed=0,
             # RSSM configuration
             dyn=dict(
                 typ="rssm",
@@ -78,64 +84,71 @@ class TestAgent:
             rewhead=dict(
                 layers=1,
                 units=256,
-                act="gelu",
-                norm="layer",
-                output="normal",
+                act="silu",
+                norm="rms",
+                output="symexp_twohot",
                 outscale=0.0,
-                winit="normal",
+                winit="trunc_normal_in",
                 bins=255,
             ),
             conhead=dict(
                 layers=1,
                 units=256,
-                act="gelu",
-                norm="layer",
+                act="silu",
+                norm="rms",
                 output="binary",
                 outscale=1.0,
-                winit="normal",
+                winit="trunc_normal_in",
             ),
             policy=dict(
                 layers=2,
                 units=256,
-                act="gelu",
-                norm="layer",
+                act="silu",
+                norm="rms",
                 minstd=0.1,
                 maxstd=1.0,
                 outscale=0.01,
                 unimix=0.01,
-                winit="normal",
+                winit="trunc_normal_in",
             ),
             value=dict(
                 layers=2,
                 units=256,
-                act="gelu",
-                norm="layer",
-                output="normal",
+                act="silu",
+                norm="rms",
+                output="symexp_twohot",
                 outscale=0.0,
-                winit="normal",
+                winit="trunc_normal_in",
                 bins=255,
             ),
             slowvalue=dict(
-                fraction=0.02,
+                rate=0.02,
+                every=1,
             ),
             # Policy and value distributions
-            policy_dist_disc="onehot",
-            policy_dist_cont="normal",
+            policy_dist_disc="categorical",
+            policy_dist_cont="bounded_normal",
             # Normalization
             retnorm=dict(
-                impl="mean_std",
-                decay=0.99,
-                max=1.0,
-                limit=1e-8,
+                impl="perc",
+                rate=0.01,
+                limit=1.0,
+                perclo=5.0,
+                perchi=95.0,
+                debias=False,
             ),
             valnorm=dict(
-                impl="off",
+                impl="none",
+                rate=0.01,
+                limit=1e-8,
             ),
             advnorm=dict(
-                impl="mean_std",
-                decay=0.99,
-                max=1.0,
+                impl="meanstd",
+                rate=0.01,
                 limit=1e-8,
+                perclo=5.0,
+                perchi=95.0,
+                debias=True,
             ),
             # Loss scales
             loss_scales=dict(
@@ -165,11 +178,21 @@ class TestAgent:
             ac_grads=False,
             replay_context=False,
             imag_length=15,
+            imag_last=0,
+            horizon=333,
+            contdisc=True,
             gamma=0.99,
             gae_lambda=0.95,
             actor_grad="dynamics",
             critic_type="vpredict",
             slow_critic_update=1.0,
+            reward_grad=True,
+            repval_loss=True,
+            repval_grad=True,
+            report=True,
+            report_gradnorms=False,
+            imag_loss=dict(slowtar=False, lam=0.95, actent=3e-4, slowreg=1.0),
+            repl_loss=dict(slowtar=False, lam=0.95, slowreg=1.0),
             # JAX configuration
             jax=dict(
                 platform="cpu",
