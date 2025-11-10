@@ -105,6 +105,43 @@ pre-commit install
 pytest embodied/tests/ -v
 ```
 
+### GitHub CLI Setup (Important for Fork Contributors)
+
+**CRITICAL**: If you're working on a fork, you MUST set the default repository to YOUR
+FORK, not the upstream repository. This prevents accidentally creating issues/PRs in the
+upstream repo.
+
+```bash
+# Set default repo to YOUR fork (replace with your username)
+gh repo set-default <your-username>/dreamerv3
+
+# Verify it's set correctly
+gh repo view --json nameWithOwner -q .nameWithOwner
+# Should output: <your-username>/dreamerv3
+```
+
+**Why this matters:**
+
+- `gh issue create` will create issues in the default repo
+- `gh pr create` will target the default repo
+- Without setting this, issues/PRs go to upstream by mistake
+
+**Example:**
+
+```bash
+# For this fork:
+gh repo set-default rechtevan/dreamerv3
+
+# Verify:
+gh repo view --json nameWithOwner -q .nameWithOwner
+# Output: rechtevan/dreamerv3
+```
+
+**When to create issues upstream vs fork:**
+
+- **Fork issues**: Your own development work, fork-specific features
+- **Upstream issues**: Bugs/features for the original project (contribute back)
+
 ______________________________________________________________________
 
 ## Core Commands
