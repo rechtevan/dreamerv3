@@ -1,0 +1,165 @@
+name: Docker Testing
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: # Allow manual triggers
+  schedule:
+    # Run weekly on Sunday at 00:00 UTC to catch dependency issues
+    - cron: "0 0 * * 0"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker-build:
+    name: Docker Build & Test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create test Dockerfile
+        run: |
+          cat > Dockerfile.test <<'EOF'
+          FROM python:${{ matrix.python-version }}-slim
+
+          # System dependencies
+          ENV DEBIAN_FRONTEND=noninteractive
+          ENV PYTHONUNBUFFERED=1
+          ENV PIP_NO_CACHE_DIR=1
+
+          # Install system dependencies
+          RUN apt-get update && apt-get install -y \
+              git \
+              build-essential \
+              && apt-get clean \
+              && rm -rf /var/lib/apt/lists/*
+
+          # Set working directory
+          WORKDIR /app
+
+          # Copy dependency files first for better caching
+          COPY pyproject.toml .
+          COPY setup.py .
+          COPY requirements.txt .
+
+          # Install Python dependencies
+          RUN pip install --upgrade pip setuptools wheel
+          RUN pip install -e .[dev]
+
+          # Copy source code
+          COPY . .
+
+          # Run tests by default
+          CMD ["pytest", "embodied/tests/", \
+               "--ignore=embodied/tests/test_parallel.py", \
+               "--ignore=embodied/tests/test_train.py", \
+               "--cov=dreamerv3", \
+               "--cov=embodied", \
+               "--cov-report=term", \
+               "--cov-config=.coveragerc", \
+               "-v"]
+          EOF
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.test
+          push: false
+          load: true
+          tags: dreamerv3-test:${{ matrix.python-version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            PYTHON_VERSION=${{ matrix.python-version }}
+
+      - name: Run tests in Docker container
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/app \
+            dreamerv3-test:${{ matrix.python-version }}
+
+      - name: Test package installation
+        run: |
+          docker run --rm dreamerv3-test:${{ matrix.python-version }} \
+            python -c "import dreamerv3; import embodied; print('✅ Package imports successful')"
+
+      - name: Check installed packages
+        run: |
+          docker run --rm dreamerv3-test:${{ matrix.python-version }} \
+            pip list
+
+      - name: Validate Python version
+        run: |
+          docker run --rm dreamerv3-test:${{ matrix.python-version }} \
+            python --version
+
+  docker-production-build:
+    name: Production Docker Build (Validation)
+    runs-on: ubuntu-latest
+    # Only run on main branch to save CI time
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Validate production Dockerfile
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Build only, don't run (production image is large with GPU drivers)
+          platforms: linux/amd64
+
+      - name: Check Dockerfile with hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+          ignore: DL3008,DL3013,DL3015,DL4006
+          # DL3008: Pin versions in apt-get install
+          # DL3013: Pin versions in pip
+          # DL3015: Avoid additional packages by specifying --no-install-recommends
+          # DL4006: Set SHELL option -o pipefail
+
+  summary:
+    name: Docker Test Summary
+    runs-on: ubuntu-latest
+    needs: [docker-build, docker-production-build]
+    if: always()
+    steps:
+      - name: Check status
+        run: |
+          if [[ "${{ needs.docker-build.result }}" != "success" ]] || \
+             [[ "${{ needs.docker-production-build.result }}" != "success" && "${{ github.ref }}" == "refs/heads/main" ]] || \
+             [[ "${{ needs.docker-production-build.result }}" == "skipped" && "${{ github.ref }}" != "refs/heads/main" ]]; then
+            if [[ "${{ needs.docker-build.result }}" != "success" ]]; then
+              echo "❌ Docker build and test failed"
+              exit 1
+            elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+              echo "✅ Docker tests passed"
+              echo "❌ Production Docker build failed"
+              exit 1
+            fi
+          else
+            echo "✅ All Docker checks passed"
+          fi
