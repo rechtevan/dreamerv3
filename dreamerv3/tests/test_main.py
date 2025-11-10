@@ -271,3 +271,157 @@ class TestHelperFunctions:
         # Verify eval replay has reduced capacity
         assert replay is not None
         assert hasattr(replay, "sample")
+
+    def test_make_logger_jsonl_output(self):
+        """Test make_logger creates logger with JSONL output"""
+        import tempfile
+
+        from dreamerv3.main import make_logger
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = elements.Config(
+                logdir=tmpdir,
+                task="dummy_test",
+                env=elements.Config(dummy=elements.Config(repeat=1)),
+                logger=elements.Config(
+                    filter=".*",
+                    outputs=["jsonl"],
+                    timer=False,
+                    fps=20,
+                    user="test",
+                ),
+            )
+
+            logger = make_logger(config)
+
+            # Verify logger was created
+            assert logger is not None
+            assert hasattr(logger, "add")
+
+    @pytest.mark.skip(reason="TensorBoard requires tensorflow (optional dependency)")
+    def test_make_logger_tensorboard_output(self):
+        """Test make_logger creates logger with TensorBoard output"""
+        import tempfile
+
+        from dreamerv3.main import make_logger
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = elements.Config(
+                logdir=tmpdir,
+                task="dummy_test",
+                env=elements.Config(dummy=elements.Config(repeat=1)),
+                logger=elements.Config(
+                    filter=".*",
+                    outputs=["tensorboard"],
+                    timer=False,
+                    fps=20,
+                    user="test",
+                ),
+            )
+
+            logger = make_logger(config)
+
+            # Verify logger was created
+            assert logger is not None
+            assert hasattr(logger, "add")
+
+    def test_make_stream(self):
+        """Test make_stream creates data stream from replay"""
+        import tempfile
+
+        from dreamerv3.main import make_replay, make_stream
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create replay buffer first
+            config = elements.Config(
+                logdir=tmpdir,
+                batch_size=4,
+                batch_length=16,
+                report_length=32,
+                consec_train=1,
+                consec_report=1,
+                replay_context=0,
+                replica=0,
+                replicas=1,
+                replay=dict(
+                    size=1000,
+                    online=True,
+                    chunksize=256,
+                    fracs=dict(uniform=1.0),
+                ),
+            )
+
+            replay = make_replay(config, "test_replay", mode="train")
+
+            # Create stream
+            stream = make_stream(config, replay, "train")
+
+            # Verify stream was created
+            assert stream is not None
+
+    @pytest.mark.skip(
+        reason="ext_space test triggers full agent initialization (too slow)"
+    )
+    def test_ext_space_property(self):
+        """Test agent ext_space property"""
+        import numpy as np
+
+        from dreamerv3.agent import Agent
+
+        # Test without replay_context
+        config = elements.Config(
+            logdir="/tmp/test",
+            batch_size=4,
+            batch_length=16,
+            report_length=32,
+            seed=0,
+            replay_context=0,  # Disabled
+            dyn=dict(typ="rssm", rssm=dict(deter=256, hidden=128, stoch=8, classes=8)),
+            enc=dict(typ="simple", simple=dict(depth=32, mults=[2, 2], layers=2)),
+            dec=dict(typ="simple", simple=dict(depth=32, mults=[2, 2], layers=2)),
+            rewhead=dict(output="symexp_twohot", bins=255),
+            conhead=dict(output="binary"),
+            policy=dict(layers=2, units=256),
+            value=dict(output="symexp_twohot", bins=255),
+            slowvalue=dict(rate=0.02, every=1),
+            retnorm=dict(impl="perc", rate=0.01, limit=1.0, perclo=5.0, perchi=95.0),
+            advnorm=dict(
+                impl="meanstd", rate=0.01, limit=1e-8, perclo=5.0, perchi=95.0
+            ),
+            valnorm=dict(impl="none", rate=0.01, limit=1e-8),
+            loss_scales=dict(
+                rec=1.0,
+                rew=1.0,
+                con=1.0,
+                dyn=1.0,
+                rep=0.1,
+                policy=1.0,
+                value=1.0,
+                repval=0.3,
+            ),
+            opt=dict(lr=1e-4, agc=0.3),
+            policy_dist_disc="categorical",
+            policy_dist_cont="bounded_normal",
+            jax=dict(
+                platform="cpu",
+                compute_dtype="bfloat16",
+                policy_devices=[0],
+                train_devices=[0],
+            ),
+        )
+
+        obs_space = {
+            "image": elements.Space(np.uint8, (64, 64, 3)),
+            "reward": elements.Space(np.float32, ()),
+        }
+        act_space = {"action": elements.Space(np.float32, (4,))}
+
+        # Create agent (uses wrapper)
+        agent = Agent(obs_space, act_space, config)
+
+        # Access ext_space through the inner model
+        ext_space = agent.model.ext_space
+
+        # Verify basic fields exist
+        assert "consec" in ext_space
+        assert "stepid" in ext_space
