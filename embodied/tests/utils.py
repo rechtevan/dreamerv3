@@ -79,8 +79,13 @@ class TestAgent:
         return (carry,), act, {}
 
     def train(self, carry, data):
+        # Allow extra keys added by stream wrappers (like 'consec' from Consec stream)
         expected = sorted(set(self.obs_space | self.act_space) | {"stepid"})
-        assert sorted(data.keys()) == expected, (sorted(data.keys()), expected)
+        actual = sorted(data.keys())
+        # Check that all expected keys are present
+        for key in expected:
+            assert key in data, f"Missing expected key: {key}"
+        # Allow extra keys from stream wrappers
         B, T = data["count"].shape
         (carry,) = carry
         assert carry.shape == (B,)
@@ -106,6 +111,9 @@ class TestAgent:
             "image3": np.zeros((64, 64, 3)),
             "video": np.zeros((10, 64, 64, 3)),
         }
+
+    def stream(self, st):
+        return st
 
     def dataset(self, generator):
         return generator()

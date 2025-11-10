@@ -15,6 +15,7 @@ class TestTrain:
             lambda: agent,
             bind(self._make_replay, args),
             self._make_env,
+            self._make_stream,
             self._make_logger,
             args,
         )
@@ -32,6 +33,7 @@ class TestTrain:
             lambda: agent,
             bind(self._make_replay, args),
             self._make_env,
+            self._make_stream,
             self._make_logger,
             args,
         )
@@ -54,6 +56,19 @@ class TestTrain:
         kwargs = {"length": args.batch_length, "capacity": 1e4}
         return embodied.replay.Replay(**kwargs)
 
+    def _make_stream(self, replay, mode):
+        fn = bind(replay.sample, 8, mode)
+        stream = embodied.streams.Stateless(fn)
+        stream = embodied.streams.Consec(
+            stream,
+            length=16 if mode == "train" else 8,
+            consec=1,
+            prefix=0,
+            strict=(mode == "train"),
+            contiguous=True,
+        )
+        return stream
+
     def _make_logger(self):
         return elements.Logger(
             elements.Counter(),
@@ -70,7 +85,9 @@ class TestTrain:
             report_every=0.2,
             save_every=0.2,
             report_batches=1,
+            consec_report=1,
             from_checkpoint="",
+            from_checkpoint_regex="",
             usage=dict(psutil=True),
             debug=False,
             logdir=str(logdir),
