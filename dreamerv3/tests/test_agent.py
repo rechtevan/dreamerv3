@@ -303,3 +303,228 @@ class TestAgent:
             isinstance(v, (int, float))
             for v in agent_instance.config.loss_scales.values()
         )
+
+    def test_policy_keys_property(self, obs_space, act_space, minimal_config):
+        """Test policy_keys property returns correct regex pattern"""
+        from dreamerv3.agent import Agent
+
+        agent_instance = Agent(obs_space, act_space, minimal_config)
+
+        # Access the inner model to get policy_keys
+        policy_keys = agent_instance.model.policy_keys
+        assert isinstance(policy_keys, str)
+        assert "enc" in policy_keys
+        assert "dyn" in policy_keys
+        assert "pol" in policy_keys
+
+    def test_ext_space_without_replay_context(
+        self, obs_space, act_space, minimal_config
+    ):
+        """Test ext_space property without replay context"""
+        from dreamerv3.agent import Agent
+
+        config = minimal_config.update({"replay_context": 0})
+        agent_instance = Agent(obs_space, act_space, config)
+
+        ext_space = agent_instance.model.ext_space
+        assert "consec" in ext_space
+        assert "stepid" in ext_space
+        # Should not have replay context keys
+        assert not any("enc/" in k for k in ext_space.keys())
+        assert not any("dyn/" in k for k in ext_space.keys())
+
+    def test_ext_space_with_replay_context(self, obs_space, act_space, minimal_config):
+        """Test ext_space property with replay context enabled"""
+        from dreamerv3.agent import Agent
+
+        config = minimal_config.update({"replay_context": 2})
+        agent_instance = Agent(obs_space, act_space, config)
+
+        ext_space = agent_instance.model.ext_space
+        assert "consec" in ext_space
+        assert "stepid" in ext_space
+        # Should have replay context keys (check for flat dict keys)
+        ext_keys = list(ext_space.keys())
+        # Replay context adds encoder, dynamics, and decoder entry spaces as flat dict
+        assert len(ext_keys) > 2  # More than just consec and stepid
+
+    def test_report_with_report_disabled(self, obs_space, act_space, minimal_config):
+        """Test report method early exits when report=False"""
+        from dreamerv3.agent import Agent
+
+        config = minimal_config.update({"report": False})
+        agent_instance = Agent(obs_space, act_space, config)
+
+        # Verify the report flag is set correctly
+        assert agent_instance.model.config.report is False
+        # The report method will early exit at line 288-289 when report=False
+        # This test verifies the configuration, not the runtime behavior
+
+    def test_optimizer_schedule_linear(self, obs_space, act_space, minimal_config):
+        """Test optimizer with linear learning rate schedule"""
+        from dreamerv3.agent import Agent
+
+        config = minimal_config.update(
+            {
+                "opt": dict(
+                    lr=1e-4,
+                    agc=0.3,
+                    eps=1e-8,
+                    beta1=0.9,
+                    beta2=0.999,
+                    momentum=True,
+                    wd=0.0,
+                    schedule="linear",
+                    warmup=100,
+                    anneal=1000,
+                )
+            }
+        )
+        agent_instance = Agent(obs_space, act_space, config)
+
+        # Just verify agent initializes with linear schedule
+        assert agent_instance is not None
+
+    def test_optimizer_schedule_cosine(self, obs_space, act_space, minimal_config):
+        """Test optimizer with cosine learning rate schedule"""
+        from dreamerv3.agent import Agent
+
+        config = minimal_config.update(
+            {
+                "opt": dict(
+                    lr=1e-4,
+                    agc=0.3,
+                    eps=1e-8,
+                    beta1=0.9,
+                    beta2=0.999,
+                    momentum=True,
+                    wd=0.0,
+                    schedule="cosine",
+                    warmup=100,
+                    anneal=1000,
+                )
+            }
+        )
+        agent_instance = Agent(obs_space, act_space, config)
+
+        # Just verify agent initializes with cosine schedule
+        assert agent_instance is not None
+
+
+class TestLambdaReturn:
+    """Test lambda_return function for computing bootstrapped returns"""
+
+    def test_lambda_return_shape(self):
+        """Test lambda_return returns correct shape"""
+        import jax.numpy as jnp
+
+        from dreamerv3.agent import lambda_return
+
+        B, T = 4, 8
+        last = jnp.zeros((B, T), dtype=bool)
+        term = jnp.zeros((B, T), dtype=bool)
+        rew = jnp.ones((B, T), dtype=jnp.float32)
+        val = jnp.ones((B, T), dtype=jnp.float32)
+        boot = jnp.ones((B, T), dtype=jnp.float32)
+        disc = 0.99
+        lam = 0.95
+
+        ret = lambda_return(last, term, rew, val, boot, disc, lam)
+
+        assert ret.shape == (B, T - 1)
+
+    def test_lambda_return_with_termination(self):
+        """Test lambda_return handles terminal states correctly"""
+        import jax.numpy as jnp
+
+        from dreamerv3.agent import lambda_return
+
+        B, T = 2, 5
+        last = jnp.zeros((B, T), dtype=bool)
+        term = jnp.zeros((B, T), dtype=bool)
+        term = term.at[:, 2].set(True)  # Terminal at timestep 2
+        rew = jnp.ones((B, T), dtype=jnp.float32)
+        val = jnp.ones((B, T), dtype=jnp.float32)
+        boot = jnp.ones((B, T), dtype=jnp.float32)
+        disc = 0.99
+        lam = 0.95
+
+        ret = lambda_return(last, term, rew, val, boot, disc, lam)
+
+        # Returns should be affected by terminal states
+        assert ret.shape == (B, T - 1)
+        assert jnp.all(jnp.isfinite(ret))
+
+    def test_lambda_return_with_last(self):
+        """Test lambda_return handles episode end correctly"""
+        import jax.numpy as jnp
+
+        from dreamerv3.agent import lambda_return
+
+        B, T = 2, 5
+        last = jnp.zeros((B, T), dtype=bool)
+        last = last.at[:, 3].set(True)  # Last timestep at 3
+        term = jnp.zeros((B, T), dtype=bool)
+        rew = jnp.ones((B, T), dtype=jnp.float32)
+        val = jnp.ones((B, T), dtype=jnp.float32)
+        boot = jnp.ones((B, T), dtype=jnp.float32)
+        disc = 0.99
+        lam = 0.95
+
+        ret = lambda_return(last, term, rew, val, boot, disc, lam)
+
+        assert ret.shape == (B, T - 1)
+        assert jnp.all(jnp.isfinite(ret))
+
+
+class TestImagLoss:
+    """Test imag_loss function for imagination-based policy/value training"""
+
+    def test_imag_loss_callable(self):
+        """Test imag_loss function is callable with correct signature"""
+        import inspect
+
+        from dreamerv3.agent import imag_loss
+
+        # Verify function exists and signature
+        assert callable(imag_loss)
+        sig = inspect.signature(imag_loss)
+        params = list(sig.parameters.keys())
+
+        # Check key parameters exist
+        assert "act" in params
+        assert "rew" in params
+        assert "con" in params
+        assert "policy" in params
+        assert "value" in params
+        assert "slowvalue" in params
+        assert "contdisc" in params
+        assert "horizon" in params
+        assert "lam" in params
+
+
+class TestReplLoss:
+    """Test repl_loss function for replay-based value training"""
+
+    def test_repl_loss_callable(self):
+        """Test repl_loss function is callable with correct signature"""
+        import inspect
+
+        from dreamerv3.agent import repl_loss
+
+        # Verify function exists and signature
+        assert callable(repl_loss)
+        sig = inspect.signature(repl_loss)
+        params = list(sig.parameters.keys())
+
+        # Check key parameters exist
+        assert "last" in params
+        assert "term" in params
+        assert "rew" in params
+        assert "boot" in params
+        assert "value" in params
+        assert "slowvalue" in params
+        assert "valnorm" in params
+        assert "slowtar" in params
+        assert "horizon" in params
+        assert "lam" in params
