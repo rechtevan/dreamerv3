@@ -74,8 +74,9 @@ class Driver:
         if obs["is_last"].any():
             mask = ~obs["is_last"]
             acts = {k: self._mask(v, mask) for k, v in acts.items()}
-        self.acts = {**acts, "reset": obs["is_last"].copy()}
-        trans = {**obs, **acts, **outs, **logs}
+        reset = obs["is_last"].copy()
+        self.acts = {**acts, "reset": reset}
+        trans = {**obs, **acts, **outs, **logs, "reset": reset}
         for i in range(self.length):
             trn = elements.tree.map(lambda x: x[i], trans)
             [fn(trn, i, **self.kwargs) for fn in self.callbacks]

@@ -5,12 +5,18 @@ import elements
 import numpy as np
 import pytest
 import utils
-import zerofun
+
+
+try:
+    import zerofun
+except ImportError:
+    zerofun = None  # Optional dependency for network communication tests
 
 import embodied
 from embodied.envs import dummy
 
 
+@pytest.mark.skipif(zerofun is None, reason="zerofun not installed")
 class TestParallel:
     @pytest.mark.parametrize(
         "train_ratio, eval_envs",

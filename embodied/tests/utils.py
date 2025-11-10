@@ -2,7 +2,12 @@ import time
 
 import elements
 import numpy as np
-import zerofun
+
+
+try:
+    import zerofun
+except ImportError:
+    zerofun = None  # Optional dependency for network communication tests
 
 
 class TestAgent:
@@ -10,6 +15,11 @@ class TestAgent:
         self.obs_space = obs_space
         self.act_space = act_space
         if addr:
+            if zerofun is None:
+                raise ImportError(
+                    "zerofun is required for network communication tests. "
+                    "Install it with: pip install zerofun"
+                )
             self.client = zerofun.Client(addr, connect=True)
             self.should_stats = elements.when.Clock(1)
         else:

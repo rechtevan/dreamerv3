@@ -241,23 +241,27 @@ class Replay:
                     chunk.update(0, used, part)
                     remaining -= used
 
-    # def dataset(self, batch, length=None, consec=None, prefix=0, report=False):
-    #   length = length or self.length
-    #   consec = consec or (self.length - prefix) // length
-    #   assert consec <= (self.length - prefix) // length, (
-    #       self.length, length, consec, prefix)
-    #   limiters.wait(lambda: len(self.sampler), 'Replay buffer is empty')
-    #   # For performance, each batch should be consecutive in memory, rather than
-    #   # a non-consecutive view into a longer batch. For example, this allows
-    #   # near-instant serialization when sending over the network.
-    #   while True:
-    #     seqs, is_online = zip(*[self._sample(report) for _ in range(batch)])
-    #     for i in range(consec):
-    #       offset = i * length
-    #       data = self._assemble_batch(seqs, offset, offset + length + prefix)
-    #       data = self._annotate_batch(data, is_online, is_first=(i == 0))
-    #       data['consec'] = np.full(data['is_first'].shape, i, np.int32)
-    #       yield data
+    def dataset(self, batch, length=None, consec=None, prefix=0, report=False):
+        length = length or self.length
+        consec = consec or (self.length - prefix) // length
+        assert consec <= (self.length - prefix) // length, (
+            self.length,
+            length,
+            consec,
+            prefix,
+        )
+        limiters.wait(lambda: len(self.sampler), "Replay buffer is empty")
+        # For performance, each batch should be consecutive in memory, rather than
+        # a non-consecutive view into a longer batch. For example, this allows
+        # near-instant serialization when sending over the network.
+        mode = "report" if report else "train"
+        while True:
+            seqs, is_online = zip(*[self._sample(mode) for _ in range(batch)])
+            for i in range(consec):
+                offset = i * length
+                data = self._assemble_batch(seqs, offset, offset + length + prefix)
+                data = self._annotate_batch(data, is_online, is_first=(i == 0))
+                yield data
 
     @elements.timer.section("assemble_batch")
     def _assemble_batch(self, seqs, start, stop):
