@@ -114,12 +114,36 @@ select = [
 ]
 
 ignore = [
+    "E402",    # Module level import not at top (intentional in main.py for sys.path)
     "E501",    # Line too long (handled by formatter)
+    "E731",    # Lambda assignment (common pattern in JAX code, will fix in Issue #11)
+    "B006",    # Mutable argument defaults (will fix in Issue #11)
+    "B007",    # Loop control variable not used (will fix in Issue #11)
     "B008",    # Function call in argument defaults
+    "B019",    # functools.cache on methods can leak memory (will fix in Issue #11)
+    "B020",    # Loop control variable overrides iterable (will fix in Issue #11)
+    "B023",    # Function definition does not bind loop variable (will fix in Issue #11)
+    "B904",    # raise without from inside except (will fix in Issue #11)
     "B905",    # zip without explicit strict parameter
+    "C401",    # Unnecessary generator (will fix in Issue #11)
+    "C408",    # Unnecessary dict() call (will fix in Issue #11)
+    "C413",    # Unnecessary reversed() around sorted() (will fix in Issue #11)
+    "C414",    # Unnecessary list() inside sorted() (will fix in Issue #11)
+    "F401",    # Imported but unused (common in __init__.py for re-exports)
+    "F403",    # from module import * (common in __init__.py)
     "N803",    # Argument name should be lowercase (conflicts with JAX conventions)
+    "N804",    # First arg should be cls (conflicts with __new__ pattern)
     "N806",    # Variable in function should be lowercase (conflicts with JAX conventions)
+    "RUF005",  # Consider unpacking instead of concatenation (will fix in Issue #11)
+    "RUF012",  # Mutable class attributes need ClassVar (will fix in Issue #11)
+    "RUF015",  # Prefer next(iter()) over single element slice (will fix in Issue #11)
+    "SIM102",  # Use single if statement instead of nested (will fix in Issue #11)
+    "SIM103",  # Return condition directly (will fix in Issue #11)
+    "SIM105",  # Use contextlib.suppress (will fix in Issue #11)
     "SIM108",  # Use ternary operator (sometimes less readable)
+    "SIM117",  # Use single with statement (will fix in Issue #11)
+    "SIM118",  # Use key in dict instead of key in dict.keys() (will fix in Issue #11)
+    "UP038",   # Use X | Y instead of (X, Y) in isinstance (requires Python 3.10+)
 ]
 
 fixable = ["ALL"]

@@ -1,0 +1,41 @@
+# Markdownlint configuration for DreamerV3
+# See: https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+
+# Glob patterns to ignore
+ignores:
+  - .local/**
+  - node_modules/**
+  - .git/**
+
+# Rule configuration
+config:
+  # MD013: Line length - Disabled (we use mdformat with --wrap=88)
+  MD013: false
+
+  # MD024: Multiple headings with same content - Allow in different sections
+  MD024:
+    siblings_only: true
+
+  # MD025: Multiple top-level headings - Allow (README has multiple H1s)
+  MD025: false
+
+  # MD033: Inline HTML - Allow for tables and formatting
+  MD033: false
+
+  # MD034: Bare URLs - Allow (common in technical docs)
+  MD034: false
+
+  # MD041: First line in file should be top-level heading - Allow exceptions
+  MD041: false
+
+  # MD046: Code block style - Fenced style preferred
+  MD046:
+    style: fenced
+
+  # MD049: Emphasis style - Underscore preferred
+  MD049:
+    style: underscore
+
+  # MD050: Strong style - Asterisk preferred
+  MD050:
+    style: asterisk

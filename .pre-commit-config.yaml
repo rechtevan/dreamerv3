@@ -1,0 +1,78 @@
+# Pre-commit hooks for DreamerV3
+# Install: pre-commit install
+# Run manually: pre-commit run --all-files
+# Update hooks: pre-commit autoupdate
+
+repos:
+  # Standard pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # Ruff - Fast Python linter (replaces flake8, isort, etc.)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.1
+    hooks:
+      # Run linter with auto-fix
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      # Run formatter
+      - id: ruff-format
+
+  # MyPy - Static type checking
+  # NOTE: Disabled for now due to 80+ type errors. Will enable in Issue #12 (Add type annotations)
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.14.0
+  #   hooks:
+  #     - id: mypy
+  #       args:
+  #         - --config-file=pyproject.toml
+  #         - --ignore-missing-imports
+  #         - --no-strict-optional
+  #         - --allow-untyped-calls
+  #         - --allow-untyped-defs
+  #       additional_dependencies:
+  #         - types-tqdm
+  #         - numpy
+  #       exclude: ^(embodied/tests/|embodied/perf/|.*_test\.py$|embodied/envs/)
+
+  # Markdown formatting and linting
+  - repo: https://github.com/executablebooks/mdformat
+    rev: 0.7.21
+    hooks:
+      - id: mdformat
+        additional_dependencies:
+          - mdformat-gfm  # GitHub Flavored Markdown
+          - mdformat-black  # Format code blocks with Black style
+        args: [--wrap=88]
+        exclude: ^\.local/
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.16.0
+    hooks:
+      - id: markdownlint-cli2
+        args: [--fix]
+        exclude: ^\.local/
+
+# Configuration for CI
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit.com hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: monthly
+  skip: []  # No hooks to skip (mypy is disabled)
+  submodules: false
