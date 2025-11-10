@@ -1,5 +1,12 @@
 # Mastering Diverse Domains through World Models
 
+[![Static Analysis](https://github.com/rechtevan/dreamerv3/actions/workflows/static-analysis.yml/badge.svg)](https://github.com/rechtevan/dreamerv3/actions/workflows/static-analysis.yml)
+[![Test Coverage](https://github.com/rechtevan/dreamerv3/actions/workflows/test-coverage.yml/badge.svg)](https://github.com/rechtevan/dreamerv3/actions/workflows/test-coverage.yml)
+[![codecov](https://codecov.io/gh/rechtevan/dreamerv3/branch/main/graph/badge.svg)](https://codecov.io/gh/rechtevan/dreamerv3)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code style: Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+
 A reimplementation of [DreamerV3][paper], a scalable and general reinforcement learning
 algorithm that masters a wide range of applications with fixed hyperparameters.
 
