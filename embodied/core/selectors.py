@@ -47,10 +47,10 @@ class Uniform:
 
     def __delitem__(self, key):
         with self.lock:
-            assert len(self) >= 2, len(self)
             index = self.indices.pop(key)
             last = self.keys.pop()
-            if index != len(self.keys):
+            # Only swap if there are remaining items after popping
+            if index < len(self.keys):
                 self.keys[index] = last
                 self.indices[last] = index
 
