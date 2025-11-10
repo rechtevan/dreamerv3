@@ -15,5 +15,6 @@ numpy<2  # DMLab: <2, MineRLv1.0: <1.24
 nvidia-cuda-nvcc-cu12<=12.2
 optax
 portal>=3.5.0
+protobuf>=4.25.8  # Security: CVE GHSA-8qvm-5x2c-j2w7, DoS via recursive messages
 scope>=0.4.4
 tqdm
