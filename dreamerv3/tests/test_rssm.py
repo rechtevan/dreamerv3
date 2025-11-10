@@ -101,10 +101,10 @@ class TestRSSM:
         batch_size = 4
         seq_length = 10
 
-        # Create dummy entries with time dimension
+        # Create dummy entries with time dimension using numpy
         entries = {
-            "deter": jnp.ones((batch_size, seq_length, 256)),
-            "stoch": jnp.ones((batch_size, seq_length, 8, 8)),
+            "deter": np.ones((batch_size, seq_length, 256), dtype=np.float32),
+            "stoch": np.ones((batch_size, seq_length, 8, 8), dtype=np.float32),
         }
 
         carry = rssm_module.truncate(entries)
@@ -118,9 +118,10 @@ class TestRSSM:
         seq_length = 10
         nlast = 3
 
+        # Create dummy entries with time dimension using numpy
         entries = {
-            "deter": jnp.ones((batch_size, seq_length, 256)),
-            "stoch": jnp.ones((batch_size, seq_length, 8, 8)),
+            "deter": np.ones((batch_size, seq_length, 256), dtype=np.float32),
+            "stoch": np.ones((batch_size, seq_length, 8, 8), dtype=np.float32),
         }
         carry = rssm_module.initial(batch_size)
 
