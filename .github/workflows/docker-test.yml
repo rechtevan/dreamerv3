@@ -53,6 +53,7 @@ jobs:
           COPY pyproject.toml .
           COPY setup.py .
           COPY requirements.txt .
+          COPY README.md .
 
           # Install Python dependencies
           RUN pip install --upgrade pip setuptools wheel
@@ -62,11 +63,8 @@ jobs:
           COPY . .
 
           # Run tests by default
-          CMD ["pytest", "embodied/tests/", \
-               "--ignore=embodied/tests/test_parallel.py", \
-               "--ignore=embodied/tests/test_train.py", \
+          CMD ["pytest", "dreamerv3/tests/", \
                "--cov=dreamerv3", \
-               "--cov=embodied", \
                "--cov-report=term", \
                "--cov-config=.coveragerc", \
                "-v"]
