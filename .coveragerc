@@ -4,6 +4,10 @@
 
 [run]
 source = dreamerv3, embodied
+# Enable subprocess coverage tracking (for multiprocessing code like driver.py)
+# Set COVERAGE_PROCESS_START=.coveragerc to enable this
+concurrency = multiprocessing
+parallel = True
 omit =
     # Test files
     */tests/*

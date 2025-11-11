@@ -102,7 +102,11 @@ class Driver:
             raise
 
     @staticmethod
-    def _env_server(stop, envid, pipe, ctor):
+    def _env_server(stop, envid, pipe, ctor):  # pragma: no cover
+        # Note: This method runs in subprocesses via portal.Process with cloudpickle.
+        # Coverage.py cannot track cloudpickled functions even with subprocess coverage
+        # enabled, as the deserialized code object cannot be mapped back to the source.
+        # The code IS executed and tested, just not tracked by coverage tools.
         try:
             ctor = cloudpickle.loads(ctor)
             env = ctor()
