@@ -824,9 +824,6 @@ class TestGRUIntegration:
 class TestDropoutIntegration:
     """Integration tests for dropout function"""
 
-    @pytest.mark.skip(
-        reason="Requires proper ninjax RNG state handling - needs rewrite"
-    )
     def test_dropout_training_mode(self):
         """Test dropout in training mode"""
 
@@ -837,7 +834,7 @@ class TestDropoutIntegration:
         model = Model(name="model")
         x = jnp.ones((100, 64), dtype=nets.COMPUTE_DTYPE)
         state = nj.init(model)({}, x, seed=0)
-        state, y = nj.pure(model)(state, x)
+        state, y = nj.pure(model)(state, x, seed=1)
 
         # Some elements should be zeroed out
         assert jnp.sum(y == 0) > 0
@@ -878,9 +875,6 @@ class TestDropoutIntegration:
 class TestInitializerIntegration:
     """Integration tests for Initializer with ninjax context"""
 
-    @pytest.mark.skip(
-        reason="Requires proper ninjax RNG state handling - needs rewrite"
-    )
     def test_initializer_uniform(self):
         """Test uniform initialization"""
 
@@ -891,15 +885,12 @@ class TestInitializerIntegration:
 
         model = Model(name="model")
         state = nj.init(model)({}, seed=0)
-        state, weights = nj.pure(model)(state)
+        state, weights = nj.pure(model)(state, seed=1)
 
         assert weights.shape == (100, 50)
         # Uniform initialization should have values in reasonable range
         assert jnp.abs(weights).max() < 1.0
 
-    @pytest.mark.skip(
-        reason="Requires proper ninjax RNG state handling - needs rewrite"
-    )
     def test_initializer_normal(self):
         """Test normal initialization"""
 
@@ -910,15 +901,12 @@ class TestInitializerIntegration:
 
         model = Model(name="model")
         state = nj.init(model)({}, seed=0)
-        state, weights = nj.pure(model)(state)
+        state, weights = nj.pure(model)(state, seed=1)
 
         assert weights.shape == (100, 50)
         # Most values should be within 3 standard deviations
         assert jnp.abs(weights).max() < 1.0
 
-    @pytest.mark.skip(
-        reason="Requires proper ninjax RNG state handling - needs rewrite"
-    )
     def test_initializer_trunc_normal(self):
         """Test truncated normal initialization"""
 
@@ -929,15 +917,12 @@ class TestInitializerIntegration:
 
         model = Model(name="model")
         state = nj.init(model)({}, seed=0)
-        state, weights = nj.pure(model)(state)
+        state, weights = nj.pure(model)(state, seed=1)
 
         assert weights.shape == (100, 50)
         # Truncated normal should have no extreme outliers
         assert jnp.abs(weights).max() < 1.0
 
-    @pytest.mark.skip(
-        reason="Requires proper ninjax RNG state handling - needs rewrite"
-    )
     def test_initializer_normed(self):
         """Test normed initialization"""
 
@@ -948,16 +933,13 @@ class TestInitializerIntegration:
 
         model = Model(name="model")
         state = nj.init(model)({}, seed=0)
-        state, weights = nj.pure(model)(state)
+        state, weights = nj.pure(model)(state, seed=1)
 
         assert weights.shape == (100, 50)
         # Check column-wise normalization
         norms = jnp.linalg.norm(weights, axis=0)
         assert jnp.allclose(norms, 1.0, rtol=0.1)
 
-    @pytest.mark.skip(
-        reason="Requires proper ninjax RNG state handling - needs rewrite"
-    )
     def test_initializer_fan_modes(self):
         """Test different fan modes"""
         for fan in ["in", "out", "avg"]:
@@ -969,13 +951,10 @@ class TestInitializerIntegration:
 
             model = Model(name="model")
             state = nj.init(model)({}, seed=0)
-            state, weights = nj.pure(model)(state)
+            state, weights = nj.pure(model)(state, seed=1)
 
             assert weights.shape == (100, 50)
 
-    @pytest.mark.skip(
-        reason="Requires proper ninjax RNG state handling - needs rewrite"
-    )
     def test_initializer_scale(self):
         """Test initialization with custom scale"""
 
@@ -989,7 +968,7 @@ class TestInitializerIntegration:
 
         model = Model(name="model")
         state = nj.init(model)({}, seed=0)
-        state, (w1, w2) = nj.pure(model)(state)
+        state, (w1, w2) = nj.pure(model)(state, seed=1)
 
         # Scaled weights should have smaller magnitude
         assert jnp.abs(w2).mean() < jnp.abs(w1).mean()
