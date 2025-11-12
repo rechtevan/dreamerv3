@@ -612,6 +612,39 @@ class TestZip:
         assert (result["obs"]["state"][:, 0] == [0, 2]).all()
         assert (result["reward"][:, 0] == [0, 3]).all()
 
+    def test_load_assertion_on_mismatched_length(self):
+        """Test assertion when loading with mismatched data length."""
+
+        class SimpleSource:
+            def __init__(self):
+                self.count = 0
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                self.count += 1
+                return {"value": np.array([[self.count]])}
+
+            def save(self):
+                return {"count": self.count}
+
+            def load(self, state):
+                self.count = state["count"]
+
+        sources = [SimpleSource() for _ in range(3)]
+        stream = embodied.core.streams.Zip(sources)
+        iter(stream)
+
+        # Create state data with wrong number of sources
+        wrong_state = [
+            {"count": 1},
+            {"count": 2},
+        ]  # Only 2 states, but we have 3 sources
+
+        with pytest.raises(AssertionError):
+            stream.load(wrong_state)
+
 
 class TestMap:
     """Tests for Map stream that applies transformations."""
@@ -1094,6 +1127,74 @@ class TestMixer:
 
         assert iter(stream) is stream
 
+    def test_load_assertion_on_key_mismatch(self):
+        """Test assertion when loading with mismatched keys."""
+
+        class SimpleSource:
+            def __init__(self, value):
+                self.value = value
+                self.count = 0
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                self.count += 1
+                return {"source": self.value, "count": self.count}
+
+            def save(self):
+                return {"count": self.count}
+
+            def load(self, state):
+                self.count = state["count"]
+
+        sources = {"a": SimpleSource(1), "b": SimpleSource(2)}
+        weights = {"a": 1.0, "b": 1.0}
+        stream = embodied.core.streams.Mixer(sources, weights, seed=42)
+        iter(stream)
+
+        # Get some samples
+        for _ in range(5):
+            next(stream)
+
+        state = stream.save()
+
+        # Create new stream with different keys
+        new_sources = {"x": SimpleSource(1), "y": SimpleSource(2)}
+        new_weights = {"x": 1.0, "y": 1.0}
+        new_stream = embodied.core.streams.Mixer(new_sources, new_weights, seed=42)
+        iter(new_stream)
+
+        # Loading with mismatched keys should raise assertion
+        with pytest.raises(AssertionError):
+            new_stream.load(state)
+
+    def test_iter_assertion_when_already_started(self):
+        """Test assertion when calling iter twice."""
+
+        class SimpleSource:
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                return {"value": 1}
+
+            def save(self):
+                return {}
+
+            def load(self, state):
+                pass
+
+        sources = {"a": SimpleSource(), "b": SimpleSource()}
+        weights = {"a": 1.0, "b": 1.0}
+        stream = embodied.core.streams.Mixer(sources, weights)
+
+        iter(stream)
+
+        # Second call to iter should raise assertion
+        with pytest.raises(AssertionError):
+            iter(stream)
+
 
 class TestStreamIntegration:
     """Integration tests combining multiple stream types."""
@@ -1119,3 +1220,202 @@ class TestStreamIntegration:
         result = next(mapped)
         assert result["count"] == 2
         assert result["squared"] == 4
+
+    def test_zip_with_map(self):
+        """Test Zip combined with Map."""
+
+        class SimpleSource:
+            def __init__(self, offset):
+                self.offset = offset
+                self.count = 0
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                result = {"value": np.array([[self.count + self.offset]])}
+                self.count += 1
+                return result
+
+            def save(self):
+                return {"count": self.count}
+
+            def load(self, state):
+                self.count = state["count"]
+
+        sources = [SimpleSource(i * 10) for i in range(2)]
+        zipped = embodied.core.streams.Zip(sources)
+        mapped = embodied.core.streams.Map(
+            zipped, lambda x: {**x, "doubled": x["value"] * 2}
+        )
+
+        iter(mapped)
+
+        result = next(mapped)
+        assert result["value"].shape == (2, 1)
+        assert (result["doubled"] == result["value"] * 2).all()
+
+    def test_consec_with_prefetch(self):
+        """Test Consec with Prefetch for async loading."""
+
+        class SimpleSource:
+            def __init__(self):
+                self.count = 0
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                batch_size = 1
+                seq_len = 9
+                data = {
+                    "is_first": np.zeros((batch_size, seq_len), dtype=bool),
+                    "value": np.full((batch_size, seq_len), self.count),
+                }
+                data["is_first"][:, 0] = True
+                self.count += 1
+                return data
+
+            def save(self):
+                return {"count": self.count}
+
+            def load(self, state):
+                self.count = state["count"]
+
+        source = SimpleSource()
+        consec = embodied.core.streams.Consec(source, length=3, consec=3)
+        prefetch = embodied.core.streams.Prefetch(consec, amount=2)
+
+        iter(prefetch)
+        time.sleep(0.1)
+
+        chunk1 = next(prefetch)
+        assert chunk1["value"].shape == (1, 3)
+        assert (chunk1["consec"] == 0).all()
+
+        chunk2 = next(prefetch)
+        assert (chunk2["consec"] == 1).all()
+
+    def test_mixer_with_map(self):
+        """Test Mixer with Map transformation."""
+
+        class SimpleSource:
+            def __init__(self, value):
+                self.value = value
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                return {"source_id": self.value, "data": np.array([self.value])}
+
+            def save(self):
+                return {}
+
+            def load(self, state):
+                pass
+
+        sources = {"a": SimpleSource(1), "b": SimpleSource(2)}
+        weights = {"a": 1.0, "b": 1.0}
+        mixer = embodied.core.streams.Mixer(sources, weights, seed=0)
+        mapped = embodied.core.streams.Map(
+            mixer, lambda x: {**x, "multiplied": x["data"] * 10}
+        )
+
+        iter(mapped)
+
+        result = next(mapped)
+        assert result["source_id"] in [1, 2]
+        assert (result["multiplied"] == result["data"] * 10).all()
+
+    def test_complex_pipeline(self):
+        """Test complex pipeline: Zip -> Map -> Prefetch."""
+
+        class SimpleSource:
+            def __init__(self, offset):
+                self.offset = offset
+                self.count = 0
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                result = {"value": np.array([[self.count + self.offset]])}
+                self.count += 1
+                return result
+
+            def save(self):
+                return {"count": self.count}
+
+            def load(self, state):
+                self.count = state["count"]
+
+        sources = [SimpleSource(i * 100) for i in range(3)]
+        zipped = embodied.core.streams.Zip(sources)
+        mapped = embodied.core.streams.Map(
+            zipped, lambda x: {**x, "sum": x["value"].sum()}
+        )
+        prefetch = embodied.core.streams.Prefetch(mapped, amount=2)
+
+        iter(prefetch)
+        time.sleep(0.1)
+
+        result = next(prefetch)
+        assert result["value"].shape == (3, 1)
+        assert result["sum"] == result["value"].sum()
+
+    def test_save_load_complex_pipeline(self):
+        """Test save/load on complex pipeline."""
+
+        class SimpleSource:
+            def __init__(self, offset):
+                self.offset = offset
+                self.count = 0
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                result = {"value": np.array([[self.count + self.offset]])}
+                self.count += 1
+                return result
+
+            def save(self):
+                return {"count": self.count, "offset": self.offset}
+
+            def load(self, state):
+                self.count = state["count"]
+                self.offset = state["offset"]
+
+        sources = [SimpleSource(i * 10) for i in range(2)]
+        zipped = embodied.core.streams.Zip(sources)
+        mapped = embodied.core.streams.Map(
+            zipped, lambda x: {**x, "doubled": x["value"] * 2}
+        )
+
+        iter(mapped)
+
+        # Get some samples
+        next(mapped)
+        next(mapped)
+
+        # Save state
+        state = mapped.save()
+
+        # Create new pipeline and load state
+        new_sources = [SimpleSource(i * 10) for i in range(2)]
+        new_zipped = embodied.core.streams.Zip(new_sources)
+        new_mapped = embodied.core.streams.Map(
+            new_zipped, lambda x: {**x, "doubled": x["value"] * 2}
+        )
+        new_mapped.started = True
+        new_mapped.iterator = iter(new_zipped)
+        new_zipped.started = True
+        new_zipped.iterators = [iter(s) for s in new_sources]
+
+        new_mapped.load(state)
+
+        result = next(new_mapped)
+        # Should continue from where we left off (count=2)
+        assert result["value"][0, 0] == 2 + 0  # First source
+        assert result["value"][1, 0] == 2 + 10  # Second source
