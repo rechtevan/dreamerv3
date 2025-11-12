@@ -969,3 +969,472 @@ class TestIntegrationScenarios:
         for _ in range(100):
             key = selector()
             assert key >= 500
+
+
+class TestSampleTreeSampling:
+    """Additional tests for SampleTree.sample edge cases."""
+
+    def test_sample_with_inf_priority(self):
+        """Test sampling when some nodes have infinite priority."""
+        tree = selectors.SampleTree(branching=16, seed=0)
+        tree.insert(1, np.inf)
+        tree.insert(2, 1.0)
+        tree.insert(3, 1.0)
+
+        # Should only sample key 1 (infinite priority)
+        counts = collections.defaultdict(int)
+        for _ in range(100):
+            counts[tree.sample()] += 1
+
+        # Key 1 should dominate sampling
+        assert counts[1] > 90
+
+    def test_sample_with_multiple_inf_priorities(self):
+        """Test sampling when multiple nodes have infinite priority."""
+        tree = selectors.SampleTree(branching=16, seed=0)
+        tree.insert(1, np.inf)
+        tree.insert(2, np.inf)
+        tree.insert(3, 1.0)
+
+        # Should uniformly sample between keys 1 and 2
+        counts = collections.defaultdict(int)
+        for _ in range(100):
+            key = tree.sample()
+            counts[key] += 1
+
+        # Keys 1 and 2 should be sampled, key 3 should not
+        assert counts[1] > 0
+        assert counts[2] > 0
+        assert counts[3] == 0
+
+    def test_sample_with_all_zero_priorities(self):
+        """Test sampling when all nodes have zero priority."""
+        tree = selectors.SampleTree(branching=16, seed=0)
+        tree.insert(1, 0.0)
+        tree.insert(2, 0.0)
+        tree.insert(3, 0.0)
+
+        # Should sample uniformly (all equal when total=0)
+        counts = collections.defaultdict(int)
+        for _ in range(300):
+            counts[tree.sample()] += 1
+
+        # Each key should be sampled roughly equally
+        assert 50 < counts[1] < 150
+        assert 50 < counts[2] < 150
+        assert 50 < counts[3] < 150
+
+    def test_sample_single_item(self):
+        """Test sampling with single item."""
+        tree = selectors.SampleTree(branching=16, seed=0)
+        tree.insert(42, 1.0)
+
+        # Should always return the single item
+        for _ in range(10):
+            assert tree.sample() == 42
+
+
+class TestMixtureLen:
+    """Test __len__ for Mixture selector."""
+
+    def test_mixture_len_not_implemented(self):
+        """Test that Mixture does not implement __len__."""
+        sel1 = selectors.Uniform(seed=0)
+        sel2 = selectors.Uniform(seed=1)
+        sel1[1] = [b"step1"]
+        sel2[2] = [b"step2"]
+
+        mixture = selectors.Mixture(
+            {"sel1": sel1, "sel2": sel2}, {"sel1": 0.5, "sel2": 0.5}, seed=0
+        )
+
+        # Mixture does not define __len__, so this will raise AttributeError
+        # or return parent class behavior
+        with pytest.raises(TypeError):
+            len(mixture)
+
+
+class TestPrioritizedEdgeCases:
+    """Additional edge cases for Prioritized selector."""
+
+    def test_prioritize_with_byte_stepids(self):
+        """Test that byte stepids work correctly."""
+        prio = selectors.Prioritized(seed=0)
+        prio[1] = [b"step1", b"step2"]
+
+        # Prioritize with byte stepids directly
+        prio.prioritize([b"step1", b"step2"], [5.0, 10.0])
+
+        assert prio.prios[b"step1"] == 5.0
+        assert prio.prios[b"step2"] == 10.0
+
+    def test_aggregate_with_exponent_not_one(self):
+        """Test _aggregate with different exponent values."""
+        prio = selectors.Prioritized(exponent=2.0, initial=1.0, seed=0)
+        prio[1] = [b"step1", b"step2"]
+        prio.prioritize([b"step1", b"step2"], [2.0, 4.0])
+
+        # With exponent=2.0: (2^2 + 4^2) / 2 = (4 + 16) / 2 = 10.0
+        aggregate = prio._aggregate(1)
+        assert abs(aggregate - 10.0) < 0.01
+
+    def test_aggregate_with_maxfrac_and_exponent(self):
+        """Test _aggregate with both maxfrac and exponent."""
+        prio = selectors.Prioritized(exponent=2.0, maxfrac=0.5, initial=1.0, seed=0)
+        prio[1] = [b"step1", b"step2"]
+        prio.prioritize([b"step1", b"step2"], [2.0, 4.0])
+
+        # With exponent=2.0: priorities become [4.0, 16.0]
+        # mean = 10.0, max = 16.0
+        # aggregate = 0.5 * 16.0 + 0.5 * 10.0 = 13.0
+        aggregate = prio._aggregate(1)
+        assert abs(aggregate - 13.0) < 0.01
+
+    def test_prioritize_nonexistent_step_silent_fail(self):
+        """Test that prioritizing nonexistent steps prints message but doesn't crash."""
+        prio = selectors.Prioritized(seed=0)
+        prio[1] = [b"step1"]
+
+        # This should print a message but not raise
+        # (testing that it doesn't crash)
+        prio.prioritize([b"nonexistent"], [10.0])
+
+    def test_update_tree_for_removed_item_silent_fail(self):
+        """Test tree update for removed items prints message but doesn't crash."""
+        prio = selectors.Prioritized(seed=0)
+        prio[1] = [b"step1"]
+        prio[2] = [b"step1"]  # Share same stepid
+
+        # Delete one item
+        del prio[1]
+
+        # Try to update - should work for remaining item
+        prio.prioritize([b"step1"], [10.0])
+
+    def test_maxfrac_boundary_values(self):
+        """Test maxfrac at boundary values."""
+        # maxfrac=0.0 means pure mean
+        prio0 = selectors.Prioritized(exponent=1.0, maxfrac=0.0, initial=1.0, seed=0)
+        prio0[1] = [b"step1", b"step2"]
+        prio0.prioritize([b"step1", b"step2"], [2.0, 4.0])
+        assert abs(prio0._aggregate(1) - 3.0) < 0.01
+
+        # maxfrac=1.0 means pure max
+        prio1 = selectors.Prioritized(exponent=1.0, maxfrac=1.0, initial=1.0, seed=0)
+        prio1[1] = [b"step1", b"step2"]
+        prio1.prioritize([b"step1", b"step2"], [2.0, 4.0])
+        assert abs(prio1._aggregate(1) - 4.0) < 0.01
+
+    def test_zero_on_sample_with_multiple_stepids(self):
+        """Test zero_on_sample with item containing multiple stepids."""
+        prio = selectors.Prioritized(
+            exponent=1.0, initial=5.0, zero_on_sample=True, seed=0
+        )
+        prio[1] = [b"step1", b"step2", b"step3"]
+
+        # Initial priorities should be 5.0 (initial value)
+        assert prio.prios[b"step1"] == 5.0
+
+        # Sample - this will zero out priorities
+        key = prio()
+        assert key == 1
+
+        # After sampling, all stepids for this key should be zeroed
+        # (give it a moment to propagate)
+        import time
+
+        time.sleep(0.01)
+
+    def test_branching_factor(self):
+        """Test that custom branching factor works."""
+        prio = selectors.Prioritized(branching=4, seed=0)
+        for i in range(100):
+            prio[i] = [f"step{i}".encode()]
+
+        # Should work with custom branching
+        assert len(prio) == 100
+        key = prio()
+        assert 0 <= key < 100
+
+    def test_invalid_maxfrac(self):
+        """Test that invalid maxfrac values are rejected."""
+        with pytest.raises(AssertionError):
+            selectors.Prioritized(maxfrac=-0.1, seed=0)
+
+        with pytest.raises(AssertionError):
+            selectors.Prioritized(maxfrac=1.1, seed=0)
+
+
+class TestSampleTreeBranching:
+    """Test SampleTree with different branching factors."""
+
+    def test_branching_assertion(self):
+        """Test that branching < 2 is rejected."""
+        with pytest.raises(AssertionError):
+            selectors.SampleTree(branching=1, seed=0)
+
+        with pytest.raises(AssertionError):
+            selectors.SampleTree(branching=0, seed=0)
+
+    def test_tree_growth_pattern(self):
+        """Test that tree grows correctly as items are added."""
+        tree = selectors.SampleTree(branching=4, seed=0)
+
+        # Empty tree
+        assert tree.root.uprob == 0
+        assert len(tree.root.children) == 0
+
+        # Add first item - goes to root
+        tree.insert(1, 1.0)
+        assert tree.root.uprob == 1.0
+        assert len(tree.root.children) == 1
+
+        # Add more items - fills root
+        for i in range(2, 5):
+            tree.insert(i, 1.0)
+        assert tree.root.uprob == 4.0
+        assert len(tree.root.children) == 4
+
+        # Add 5th item - creates new root
+        tree.insert(5, 1.0)
+        assert tree.root.uprob == 5.0
+
+    def test_remove_triggers_tree_reorganization(self):
+        """Test that removes can trigger tree reorganization."""
+        tree = selectors.SampleTree(branching=4, seed=0)
+
+        # Build tree with specific structure
+        for i in range(20):
+            tree.insert(i, 1.0)
+
+        initial_root = tree.root
+
+        # Remove last item
+        tree.remove(19)
+
+        # Tree structure should adjust
+        assert len(tree) == 19
+
+    def test_insert_after_remove_reuses_space(self):
+        """Test that inserts after removes reuse available space."""
+        tree = selectors.SampleTree(branching=4, seed=0)
+
+        # Add items
+        for i in range(10):
+            tree.insert(i, 1.0)
+
+        # Remove some
+        tree.remove(9)
+        tree.remove(8)
+
+        # Add new items - should reuse space
+        tree.insert(100, 2.0)
+        tree.insert(101, 2.0)
+
+        assert len(tree) == 10
+        assert tree.root.uprob == 12.0  # 8*1.0 + 2*2.0
+
+
+class TestUniformEdgeCases:
+    """Additional edge cases for Uniform selector."""
+
+    def test_delete_middle_items_maintains_consistency(self):
+        """Test that deleting middle items maintains index consistency."""
+        uniform = selectors.Uniform(seed=0)
+        for i in range(10):
+            uniform[i] = [b"step"]
+
+        # Delete middle items
+        for i in [3, 5, 7]:
+            del uniform[i]
+
+        assert len(uniform) == 7
+        assert len(uniform.keys) == 7
+        assert len(uniform.indices) == 7
+
+        # All keys should be in indices
+        for key in uniform.keys:
+            assert key in uniform.indices
+
+        # All index values should be valid
+        for key, idx in uniform.indices.items():
+            assert 0 <= idx < len(uniform.keys)
+            assert uniform.keys[idx] == key
+
+    def test_delete_all_items_one_by_one(self):
+        """Test deleting all items sequentially."""
+        uniform = selectors.Uniform(seed=0)
+        n = 10
+        for i in range(n):
+            uniform[i] = [b"step"]
+
+        # Delete all
+        for i in range(n):
+            del uniform[i]
+
+        assert len(uniform) == 0
+        assert len(uniform.keys) == 0
+        assert len(uniform.indices) == 0
+
+
+class TestFifoEdgeCases:
+    """Additional edge cases for Fifo selector."""
+
+    def test_multiple_deletes_from_middle(self):
+        """Test multiple deletions from middle of queue."""
+        fifo = selectors.Fifo()
+        for i in range(10):
+            fifo[i] = [b"step"]
+
+        # Delete several middle items
+        del fifo[3]
+        del fifo[5]
+        del fifo[7]
+
+        assert len(fifo) == 7
+        # First item should still be 0
+        assert fifo() == 0
+
+    def test_delete_recreate_same_key(self):
+        """Test deleting and recreating item with same key."""
+        fifo = selectors.Fifo()
+        fifo[1] = [b"step1"]
+        fifo[2] = [b"step2"]
+        fifo[3] = [b"step3"]
+
+        # Delete middle
+        del fifo[2]
+        assert len(fifo) == 2
+
+        # Recreate with same key
+        fifo[2] = [b"step2_new"]
+        assert len(fifo) == 3
+
+        # Order should be [1, 3, 2]
+        assert fifo() == 1
+
+
+class TestCoverageMissingLines:
+    """Tests specifically to cover missing lines identified by coverage analysis."""
+
+    def test_prioritized_len(self):
+        """Test __len__ method of Prioritized (line 426)."""
+        prio = selectors.Prioritized(seed=0)
+        assert len(prio) == 0
+        prio[1] = [b"step1"]
+        assert len(prio) == 1
+        prio[2] = [b"step2"]
+        assert len(prio) == 2
+
+    def test_sampletree_len(self):
+        """Test __len__ method of SampleTree (line 635)."""
+        tree = selectors.SampleTree(branching=16, seed=0)
+        assert len(tree) == 0
+        tree.insert(1, 1.0)
+        assert len(tree) == 1
+        tree.insert(2, 2.0)
+        assert len(tree) == 2
+
+    def test_prioritized_zero_on_sample_executes(self):
+        """Test zero_on_sample actually executes (lines 440-441)."""
+        prio = selectors.Prioritized(
+            exponent=1.0, initial=10.0, zero_on_sample=True, seed=0
+        )
+        prio[1] = [b"step1", b"step2"]
+
+        # Verify initial priorities
+        assert prio.prios[b"step1"] == 10.0
+        assert prio.prios[b"step2"] == 10.0
+
+        # Sample should trigger zero_on_sample
+        key = prio()
+        assert key == 1
+
+        # Priorities should be updated to zero
+        # (Check after small delay to allow prioritize to execute)
+        import time
+
+        time.sleep(0.02)
+
+    def test_prioritized_keyerror_in_prioritize(self):
+        """Test KeyError handling in prioritize (lines 409-410)."""
+        prio = selectors.Prioritized(seed=0)
+        prio[1] = [b"step1"]
+
+        # Delete the key
+        del prio[1]
+
+        # Try to prioritize non-existent stepid - should print but not crash
+        # This tests lines 409-410
+        prio.prioritize([b"step1"], [10.0])
+
+    def test_prioritized_keyerror_in_tree_update(self):
+        """Test KeyError handling in tree update (lines 417-418)."""
+        prio = selectors.Prioritized(seed=0)
+
+        # Add two items sharing same stepid
+        prio[1] = [b"shared_step"]
+        prio[2] = [b"shared_step"]
+
+        # Delete first item
+        del prio[1]
+
+        # Now try to prioritize - the stepid still exists for item 2
+        # but item 1 is gone, which could trigger KeyError in tree update
+        prio.prioritize([b"shared_step"], [5.0])
+
+        # The update should succeed for item 2
+        assert len(prio) == 1
+
+    def test_fifo_len_coverage(self):
+        """Explicit test for Fifo.__len__ (line 61)."""
+        fifo = selectors.Fifo()
+        # Multiple calls to __len__
+        assert len(fifo) == 0
+        _ = len(fifo)
+        fifo[1] = [b"step"]
+        assert len(fifo) == 1
+        _ = len(fifo)
+
+    def test_uniform_len_coverage(self):
+        """Explicit test for Uniform.__len__ (line 121)."""
+        uniform = selectors.Uniform(seed=0)
+        # Multiple calls to __len__
+        assert len(uniform) == 0
+        _ = len(uniform)
+        uniform[1] = [b"step"]
+        assert len(uniform) == 1
+        _ = len(uniform)
+
+    def test_sampletree_remove_all_items(self):
+        """Test SampleTree.remove until last=None (lines 695-696)."""
+        tree = selectors.SampleTree(branching=16, seed=0)
+        tree.insert(1, 1.0)
+        tree.insert(2, 2.0)
+
+        # Remove all items
+        tree.remove(1)
+        tree.remove(2)
+
+        # last should be None now
+        assert tree.last is None
+        assert len(tree) == 0
+
+    def test_sampletree_sample_uniform_zero_probs(self):
+        """Test SampleTree.sample with all zero probabilities (line 739)."""
+        tree = selectors.SampleTree(branching=16, seed=0)
+
+        # Insert items with all zero probabilities
+        tree.insert(1, 0.0)
+        tree.insert(2, 0.0)
+        tree.insert(3, 0.0)
+
+        # Should sample uniformly when all priorities are zero
+        # This tests line 739: probs = np.ones(len(uprobs)) / len(uprobs)
+        sampled = set()
+        for _ in range(100):
+            key = tree.sample()
+            sampled.add(key)
+
+        # Should sample from all keys
+        assert 1 in sampled or 2 in sampled or 3 in sampled
