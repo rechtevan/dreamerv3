@@ -368,3 +368,77 @@ class TestReplay:
             [worker.join() for worker in workers]
 
         assert len(replay) == capacity
+
+    @pytest.mark.parametrize("Replay", REPLAYS_UNLIMITED)
+    def test_online_mode(self, Replay):
+        """Test online mode initialization and sampling"""
+        replay = Replay(length=5, capacity=20, online=True)
+
+        # Add sequences
+        for step in range(10):
+            replay.add({"step": step})
+
+        # Sample in train mode should prefer online queue
+        dataset = unbatched(replay.dataset(1))
+        seq = next(dataset)
+        assert seq["step"].shape == (5,)
+
+    @pytest.mark.parametrize("Replay", REPLAYS_UNLIMITED)
+    def test_update_without_priority(self, Replay):
+        """Test update method without priority (just updates counter)"""
+        replay = Replay(length=5, capacity=20)
+
+        # Add sequences
+        for step in range(10):
+            replay.add({"step": step})
+
+        # Get a sample to get stepid
+        dataset = unbatched(replay.dataset(1))
+        seq = next(dataset)
+        stepid = seq["stepid"]
+
+        # Update without priority (priority=None path)
+        replay.update({"stepid": stepid[None]})
+
+        # Should have recorded updates
+        assert replay.stats()["updates"] > 0
+
+    @pytest.mark.parametrize("Replay", REPLAYS_UNLIMITED)
+    def test_update_with_data(self, Replay):
+        """Test update method with data updates"""
+        replay = Replay(length=5, capacity=20)
+
+        # Add sequences
+        for step in range(10):
+            replay.add({"step": step, "value": step * 2})
+
+        # Get a sample to get stepid
+        dataset = unbatched(replay.dataset(1))
+        seq = next(dataset)
+        stepid = seq["stepid"]
+
+        # Update with new data
+        new_value = np.ones((1, 5), dtype=np.float32) * 999
+        replay.update({"stepid": stepid[None], "value": new_value})
+
+        # Should have recorded updates
+        assert replay.stats()["updates"] > 0
+
+    @pytest.mark.parametrize("Replay", REPLAYS_UNLIMITED)
+    def test_update_with_invalid_stepid(self, Replay):
+        """Test update method handles invalid stepid gracefully"""
+        replay = Replay(length=5, capacity=20)
+
+        # Add sequences
+        for step in range(10):
+            replay.add({"step": step, "value": step})
+
+        # Create a fake stepid that won't exist
+        fake_stepid = np.zeros((1, 5, 20), dtype=np.uint8)
+        new_value = np.ones((1, 5), dtype=np.float32) * 999
+
+        # Update with invalid stepid should not crash (KeyError caught)
+        replay.update({"stepid": fake_stepid, "value": new_value})
+
+        # Should still have recorded the update attempt
+        assert replay.stats()["updates"] > 0
