@@ -1,3 +1,16 @@
+"""Evaluation-only mode for trained agents.
+
+This module provides a script for evaluating pre-trained agents without any
+training. It loads a checkpoint and runs the agent's policy in evaluation mode
+across multiple environment workers, collecting episode statistics and metrics.
+
+This is useful for:
+    - Benchmarking trained agents on test environments
+    - Generating rollouts for analysis or visualization
+    - Measuring final performance after training completes
+    - Validating checkpoint integrity and reproducibility
+"""
+
 from collections import defaultdict
 from functools import partial as bind
 
@@ -8,6 +21,51 @@ import embodied
 
 
 def eval_only(make_agent, make_env, make_logger, args):
+    """Run evaluation-only mode with a pre-trained agent checkpoint.
+
+    Loads a trained agent from a checkpoint and evaluates it across multiple
+    environment workers without any training. The agent's policy runs in evaluation
+    mode (deterministic or low-exploration behavior) and collects episode statistics
+    including scores, lengths, and custom metrics.
+
+    The evaluation loop:
+        1. Loads agent from checkpoint (requires args.from_checkpoint)
+        2. Initializes parallel environment workers with the agent's init policy
+        3. Runs the agent's evaluation policy for the specified number of steps
+        4. Collects per-episode metrics (score, length, rewards, custom logs)
+        5. Periodically logs aggregated statistics and system usage
+        6. Continues until reaching args.steps total environment steps
+
+    Episode metrics are aggregated across all workers and logged at intervals
+    defined by args.log_every. Per-worker episode statistics are tracked
+    independently and merged at logging time.
+
+    Args:
+        make_agent: Callable that returns an initialized agent instance with
+            policy() and init_policy() methods. The agent must be compatible
+            with checkpoint loading.
+        make_env: Callable that takes a worker index and returns an environment
+            instance implementing the embodied.Env interface (step, reset, etc.).
+        make_logger: Callable that returns a logger instance with add(), write(),
+            and close() methods for metric tracking.
+        args: Configuration object containing:
+            - from_checkpoint (str): Path to checkpoint file (required)
+            - logdir (str): Directory for evaluation logs
+            - steps (int): Total environment steps to evaluate
+            - envs (int): Number of parallel environment workers
+            - log_every (int): Logging interval in steps
+            - debug (bool): If True, disables parallel execution
+            - usage (dict): System resource monitoring configuration
+
+    Note:
+        This function requires args.from_checkpoint to be set, otherwise it will
+        fail the assertion at startup. The checkpoint must contain an 'agent' key
+        with the trained agent state.
+
+    Note:
+        Images (uint8 arrays with 3 dimensions) are only logged for worker 0 to
+        reduce memory and disk usage. All other metrics are logged for all workers.
+    """
     assert args.from_checkpoint
 
     agent = make_agent()

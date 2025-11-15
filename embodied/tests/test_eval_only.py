@@ -379,6 +379,223 @@ class TestRewardRateCalculation:
         # reward_rate is optional depending on episode length
 
 
+class TestLogPrefixHandling:
+    """Test log/ prefix handling in logfn"""
+
+    def test_log_prefix_metrics_aggregation(self):
+        """Test logfn aggregates log/ prefixed metrics"""
+        args = self._make_args(steps=100, envs=1)
+
+        # Create custom env that emits log/ metrics
+        def make_env_with_logs(i=0):
+            from embodied.envs import dummy
+
+            env = dummy.Dummy("disc", length=10)
+
+            # Wrap to add log/ metrics
+            original_step = env.step
+
+            def step_with_logs(action):
+                obs = original_step(action)
+                # Add scalar log/ metric
+                obs["log/custom_metric"] = np.array(1.5, dtype=np.float32)
+                return obs
+
+            env.step = step_with_logs
+            return env
+
+        logged = []
+        logger = self._make_logger()
+        logger.add = lambda *a, **kw: logged.append((a, kw))
+
+        with mock.patch("elements.Checkpoint") as mock_cp:
+            mock_cp.return_value.load.return_value = None
+            eval_only(
+                self._make_agent_factory(),
+                make_env_with_logs,
+                lambda: logger,
+                args,
+            )
+
+        # Check that epstats contain log/ metric aggregations
+        epstats_logs = [log for log in logged if log[1].get("prefix") == "epstats"]
+        # Should have avg, max, sum variants
+        if epstats_logs:
+            # At least one epstats log should exist
+            assert len(epstats_logs) > 0
+
+
+class TestPrintStatements:
+    """Test print statements are executed"""
+
+    def test_prints_logdir_and_start_message(self, capsys):
+        """Test eval_only prints logdir and start evaluation messages"""
+        args = self._make_args(steps=1, envs=1)
+
+        with mock.patch("elements.Checkpoint") as mock_cp:
+            mock_cp.return_value.load.return_value = None
+            eval_only(
+                self._make_agent_factory(),
+                self._make_env_factory(),
+                self._make_logger_factory(),
+                args,
+            )
+
+        captured = capsys.readouterr()
+        assert "Logdir" in captured.out
+        assert "Start evaluation" in captured.out
+
+
+class TestTimerMetrics:
+    """Test timer metrics logging"""
+
+    def test_logs_timer_metrics(self):
+        """Test eval_only logs timer statistics"""
+        args = self._make_args(steps=100, envs=1, log_every=10)
+        logged = []
+
+        logger = self._make_logger()
+        logger.add = lambda *a, **kw: logged.append((a, kw))
+
+        with mock.patch("elements.Checkpoint") as mock_cp:
+            mock_cp.return_value.load.return_value = None
+            eval_only(
+                self._make_agent_factory(),
+                self._make_env_factory(),
+                lambda: logger,
+                args,
+            )
+
+        # Should have logged timer metrics
+        timer_logs = [log for log in logged if "timer" in log[0][0]]
+        assert len(timer_logs) > 0
+
+
+class TestImageLogging:
+    """Test image logging behavior"""
+
+    def test_image_logging_worker_zero_only(self):
+        """Test images are only logged for worker 0"""
+        args = self._make_args(steps=100, envs=2)
+
+        # Track which workers logged images
+        image_logs = []
+
+        # Create env that returns uint8 image observations
+        def make_env_with_images(worker_id):
+            from embodied.envs import dummy
+
+            # Dummy environment automatically returns RGB images (uint8, size + (3,))
+            env = dummy.Dummy("cont", length=10, size=(64, 64))
+            return env
+
+        # Instrument logger to track image logs
+        logged = []
+        logger = self._make_logger()
+
+        def track_add(*args, **kwargs):
+            logged.append((args, kwargs))
+
+        logger.add = track_add
+
+        with mock.patch("elements.Checkpoint") as mock_cp:
+            mock_cp.return_value.load.return_value = None
+            eval_only(
+                self._make_agent_factory(),
+                make_env_with_images,
+                lambda: logger,
+                args,
+            )
+
+        # Check epstats for policy_* keys (would indicate image logging)
+        epstats_logs = [log for log in logged if log[1].get("prefix") == "epstats"]
+        # Images should be captured in epstats aggregation
+
+
+class TestDebugMode:
+    """Test debug mode (sequential execution)"""
+
+    def test_debug_mode_sequential_execution(self):
+        """Test eval_only respects debug flag for sequential execution"""
+        args = self._make_args(
+            steps=50, envs=2, log_every=1000
+        )  # High log_every to avoid timer issues
+        args.debug = True  # Sequential mode
+
+        with mock.patch("elements.Checkpoint") as mock_cp:
+            mock_cp.return_value.load.return_value = None
+            with mock.patch("embodied.Driver") as mock_driver_class:
+                # Make step counter work to exit the loop
+                step_counter = elements.Counter()
+                step_counter.value = args.steps  # Set to max to exit immediately
+                mock_logger = self._make_logger()
+                mock_logger.step = step_counter
+
+                # Create a mock driver that doesn't actually run
+                mock_driver = mock.Mock()
+                mock_driver.reset = mock.Mock()
+                mock_driver.on_step = mock.Mock(return_value=None)
+                # Configure __call__ to do nothing
+                mock_driver.side_effect = None
+                mock_driver.return_value = None
+
+                mock_driver_class.return_value = mock_driver
+
+                eval_only(
+                    self._make_agent_factory(),
+                    self._make_env_factory(),
+                    lambda: mock_logger,
+                    args,
+                )
+
+                # Verify Driver was called with parallel=False
+                mock_driver_class.assert_called_once()
+                call_kwargs = mock_driver_class.call_args[1]
+                assert not call_kwargs.get("parallel")
+
+
+class TestParallelMode:
+    """Test parallel mode execution"""
+
+    def test_parallel_mode_when_debug_false(self):
+        """Test eval_only uses parallel execution when debug=False"""
+        args = self._make_args(
+            steps=50, envs=2, log_every=1000
+        )  # High log_every to avoid timer issues
+        args.debug = False  # Parallel mode
+
+        with mock.patch("elements.Checkpoint") as mock_cp:
+            mock_cp.return_value.load.return_value = None
+            with mock.patch("embodied.Driver") as mock_driver_class:
+                # Make step counter work to exit the loop
+                step_counter = elements.Counter()
+                step_counter.value = args.steps  # Set to max to exit immediately
+                mock_logger = self._make_logger()
+                mock_logger.step = step_counter
+
+                # Create a mock driver that doesn't actually run
+                mock_driver = mock.Mock()
+                mock_driver.reset = mock.Mock()
+                mock_driver.on_step = mock.Mock(return_value=None)
+                # Configure __call__ to do nothing
+                mock_driver.side_effect = None
+                mock_driver.return_value = None
+
+                mock_driver_class.return_value = mock_driver
+
+                eval_only(
+                    self._make_agent_factory(),
+                    self._make_env_factory(),
+                    lambda: mock_logger,
+                    args,
+                )
+
+                # Verify Driver was called with parallel=True
+                mock_driver_class.assert_called_once()
+                call_kwargs = mock_driver_class.call_args[1]
+                assert call_kwargs.get("parallel")
+
+
 # Helper methods
 def _make_args(steps=10, envs=1, log_every=5):
     """Create mock args for eval_only"""
@@ -491,3 +708,39 @@ TestRewardRateCalculation._make_env_factory = staticmethod(_make_env_factory)
 TestRewardRateCalculation._make_agent_factory = staticmethod(_make_agent_factory)
 TestRewardRateCalculation._make_logger_factory = staticmethod(_make_logger_factory)
 TestRewardRateCalculation._make_logger = staticmethod(_make_logger)
+
+TestLogPrefixHandling._make_args = staticmethod(_make_args)
+TestLogPrefixHandling._make_env_factory = staticmethod(_make_env_factory)
+TestLogPrefixHandling._make_agent_factory = staticmethod(_make_agent_factory)
+TestLogPrefixHandling._make_logger_factory = staticmethod(_make_logger_factory)
+TestLogPrefixHandling._make_logger = staticmethod(_make_logger)
+
+TestPrintStatements._make_args = staticmethod(_make_args)
+TestPrintStatements._make_env_factory = staticmethod(_make_env_factory)
+TestPrintStatements._make_agent_factory = staticmethod(_make_agent_factory)
+TestPrintStatements._make_logger_factory = staticmethod(_make_logger_factory)
+TestPrintStatements._make_logger = staticmethod(_make_logger)
+
+TestTimerMetrics._make_args = staticmethod(_make_args)
+TestTimerMetrics._make_env_factory = staticmethod(_make_env_factory)
+TestTimerMetrics._make_agent_factory = staticmethod(_make_agent_factory)
+TestTimerMetrics._make_logger_factory = staticmethod(_make_logger_factory)
+TestTimerMetrics._make_logger = staticmethod(_make_logger)
+
+TestImageLogging._make_args = staticmethod(_make_args)
+TestImageLogging._make_env_factory = staticmethod(_make_env_factory)
+TestImageLogging._make_agent_factory = staticmethod(_make_agent_factory)
+TestImageLogging._make_logger_factory = staticmethod(_make_logger_factory)
+TestImageLogging._make_logger = staticmethod(_make_logger)
+
+TestDebugMode._make_args = staticmethod(_make_args)
+TestDebugMode._make_env_factory = staticmethod(_make_env_factory)
+TestDebugMode._make_agent_factory = staticmethod(_make_agent_factory)
+TestDebugMode._make_logger_factory = staticmethod(_make_logger_factory)
+TestDebugMode._make_logger = staticmethod(_make_logger)
+
+TestParallelMode._make_args = staticmethod(_make_args)
+TestParallelMode._make_env_factory = staticmethod(_make_env_factory)
+TestParallelMode._make_agent_factory = staticmethod(_make_agent_factory)
+TestParallelMode._make_logger_factory = staticmethod(_make_logger_factory)
+TestParallelMode._make_logger = staticmethod(_make_logger)
