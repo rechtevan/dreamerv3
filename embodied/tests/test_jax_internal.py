@@ -10,12 +10,14 @@ Tests cover:
 - mesh: Create JAX mesh from devices
 - grouped_ckpt_fns: Checkpoint function grouping
 - ckpt_fn: Checkpoint function creation
+- setup: JAX configuration setup
 
-Note: Some functions (setup, device_put, to_local/global) require complex
+Note: Some functions (device_put, to_local/global) require complex
 JAX distributed setup and are challenging to test in isolation.
 """
 
 import math
+import os
 from unittest.mock import MagicMock, patch
 
 import jax
@@ -318,8 +320,107 @@ class TestCkptFn:
         assert hasattr(shard_fn, "compile")
 
 
+class TestSetup:
+    """Test JAX setup configuration"""
+
+    def test_setup_with_mock_devices(self):
+        """Test setup configures mock devices"""
+        # Mock JAX config to avoid actually changing global state
+        with (
+            patch.object(jax.config, "update") as mock_update,
+            patch.dict("os.environ", {}, clear=True),
+        ):
+            internal.setup(mock_devices=4)
+
+            # Should add mock devices flag to XLA_FLAGS
+            assert "XLA_FLAGS" in os.environ
+            assert "xla_force_host_platform_device_count=4" in os.environ["XLA_FLAGS"]
+
+    def test_setup_with_xladump(self):
+        """Test setup configures XLA dump directory"""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dump_dir = f"{tmpdir}/xladump"
+
+            with (
+                patch.object(jax.config, "update"),
+                patch.dict("os.environ", {}, clear=True),
+            ):
+                internal.setup(xladump=dump_dir)
+
+                # Should create dump directory and add flags
+                import elements
+
+                assert elements.Path(dump_dir).exists()
+                assert "XLA_FLAGS" in os.environ
+                assert f"xla_dump_to={dump_dir}" in os.environ["XLA_FLAGS"]
+                assert "xla_dump_hlo_as_long_text" in os.environ["XLA_FLAGS"]
+
+    def test_setup_with_gpu_platform(self):
+        """Test setup adds GPU-specific flags"""
+        with (
+            patch.object(jax.config, "update"),
+            patch.dict("os.environ", {}, clear=True),
+        ):
+            internal.setup(platform="gpu", gpuflags=True)
+
+            # Should add GPU-specific XLA flags
+            assert "XLA_FLAGS" in os.environ
+            xla_flags = os.environ["XLA_FLAGS"]
+            assert "xla_gpu_enable_latency_hiding_scheduler=true" in xla_flags
+            assert "xla_gpu_all_gather_combine_threshold_bytes" in xla_flags
+
+    def test_setup_deterministic_mode(self):
+        """Test setup configures deterministic mode"""
+        with (
+            patch.object(jax.config, "update"),
+            patch.dict("os.environ", {}, clear=True),
+        ):
+            internal.setup(deterministic=True)
+
+            # Should set TF_CUDNN_DETERMINISTIC and add XLA flag
+            assert os.environ.get("TF_CUDNN_DETERMINISTIC") == "1"
+            assert "XLA_FLAGS" in os.environ
+            assert "xla_gpu_deterministic_ops=true" in os.environ["XLA_FLAGS"]
+
+    def test_setup_prealloc(self):
+        """Test setup configures memory preallocation"""
+        with (
+            patch.object(jax.config, "update"),
+            patch.dict("os.environ", {}, clear=True),
+        ):
+            internal.setup(prealloc=True)
+
+            assert os.environ.get("XLA_PYTHON_CLIENT_PREALLOCATE") == "true"
+
+        with (
+            patch.object(jax.config, "update"),
+            patch.dict("os.environ", {}, clear=True),
+        ):
+            internal.setup(prealloc=False)
+
+            assert os.environ.get("XLA_PYTHON_CLIENT_PREALLOCATE") == "false"
+
+    def test_setup_debug_mode(self):
+        """Test setup configures debug mode"""
+        with patch.object(jax.config, "update") as mock_update:
+            internal.setup(debug=True, jit=True)
+
+            # Should disable most optimizations in debug mode
+            calls = {call[0][0]: call[0][1] for call in mock_update.call_args_list}
+            assert calls.get("jax_disable_most_optimizations") is True
+
+    def test_setup_jit_disabled(self):
+        """Test setup can disable JIT compilation"""
+        with patch.object(jax.config, "update") as mock_update:
+            internal.setup(jit=False)
+
+            calls = {call[0][0]: call[0][1] for call in mock_update.call_args_list}
+            assert calls.get("jax_disable_jit") is True
+
+
 # Note: The following functions are challenging to test without full distributed setup:
-# - setup(): Modifies global JAX config and environment variables
 # - fetch_async(): Requires actual device data and multihost setup
 # - device_put(): Requires proper sharding and multihost configuration
 # - local_sharding(): Requires mesh with local_mesh
