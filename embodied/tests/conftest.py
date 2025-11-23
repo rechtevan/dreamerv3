@@ -26,4 +26,5 @@ def reset_jax_config():
     # Reset JAX config before each test to prevent state pollution from agent tests
     jax.config.update("jax_transfer_guard", "allow")
     yield
-    # Could also reset after test if needed
+    # Reset after test to ensure next test starts clean
+    jax.config.update("jax_transfer_guard", "allow")
