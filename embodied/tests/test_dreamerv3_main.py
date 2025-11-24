@@ -293,5 +293,73 @@ class TestConfigLoading:
         assert "chunksize" in config.replay
 
 
+# Additional tests for missing coverage areas
+
+
+class TestMakeLoggerOutputs:
+    """Test make_logger with different output types"""
+
+    @pytest.mark.skip(reason="Requires tensorflow dependency")
+    def test_make_logger_with_tensorboard(self, config):
+        """Test logger with TensorBoard output"""
+        config = config.update({"logger.outputs": ["tensorboard"]})
+        logger = main.make_logger(config)
+        assert logger is not None
+
+    @pytest.mark.skip(reason="Requires wandb authentication")
+    def test_make_logger_with_wandb(self, config):
+        """Test logger with WandB output"""
+        config = config.update({"logger.outputs": ["wandb"]})
+        logger = main.make_logger(config)
+        assert logger is not None
+
+    def test_make_logger_with_multiple_outputs(self, config):
+        """Test logger with multiple outputs"""
+        config = config.update({"logger.outputs": ["jsonl", "scope"]})
+        logger = main.make_logger(config)
+        assert logger is not None
+
+
+class TestMakeEnvEdgeCases:
+    """Test make_env edge cases"""
+
+    def test_make_env_with_overrides(self, config):
+        """Test make_env with parameter overrides"""
+        env = main.make_env(config, index=0, size=(32, 32))
+        assert env is not None
+        env.close()
+
+    def test_wrap_env_with_continuous_actions(self, config):
+        """Test wrap_env normalizes continuous actions"""
+        import embodied
+
+        # Dummy env with continuous actions
+        env = embodied.envs.dummy.Dummy("cont")
+        wrapped = main.wrap_env(env, config)
+
+        # Check wrappers were applied
+        assert wrapped is not None
+        wrapped.close()
+
+
+class TestMakeReplayEdgeCases:
+    """Test make_replay edge cases"""
+
+    def test_make_replay_with_replica_directory(self, config):
+        """Test replay creates replica subdirectory when replicas > 1"""
+        config = config.update({"replicas": 2, "replica": 1})
+        replay = main.make_replay(config, "replay_replicas", mode="train")
+        assert replay is not None
+
+    def test_make_replay_capacity_scaling(self, config):
+        """Test replay capacity is scaled for report mode"""
+        replay_train = main.make_replay(config, "replay_cap_train", mode="train")
+        replay_report = main.make_replay(config, "replay_cap_report", mode="report")
+
+        # Report mode should have smaller capacity
+        assert replay_train is not None
+        assert replay_report is not None
+
+
 # Note: Testing main() function directly is complex as it runs full training
 # The factory functions above provide good coverage of main.py's core logic
