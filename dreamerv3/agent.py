@@ -1,3 +1,26 @@
+"""DreamerV3 agent implementation.
+
+This module implements the DreamerV3 reinforcement learning agent, which learns
+a world model from experience and uses it to train an actor-critic policy from
+imagined trajectories.
+
+Key Components:
+    - Agent: Main agent class coordinating world model and actor-critic
+    - lambda_return: Compute λ-returns for value function training
+    - imag_loss: Imagination-based actor-critic loss
+    - repl_loss: Replay-based value loss
+
+The agent uses model-based RL: it learns a latent world model (RSSM) that
+predicts future states, then imagines trajectories in this learned model to
+train the policy and value networks.
+
+Example:
+    >>> agent = Agent(obs_space, act_space, config)
+    >>> carry = agent.init_policy(batch_size=16)
+    >>> carry, actions, outs = agent.policy(carry, observations)
+    >>> carry, outs, metrics = agent.train(carry, training_batch)
+"""
+
 import re
 
 import chex
@@ -24,6 +47,33 @@ isimage = lambda s: s.dtype == np.uint8 and len(s.shape) == 3
 
 
 class Agent(embodied.jax.Agent):
+    """DreamerV3 reinforcement learning agent.
+
+    This agent learns a world model from experiences and uses it to train an
+    actor-critic policy from imagined trajectories. The world model consists of:
+    - Encoder: Observation → latent representation
+    - RSSM: Recurrent state-space model (dynamics)
+    - Decoder: Latent → reconstructed observation
+    - Reward/Continue heads: Predict rewards and episode termination
+
+    The agent trains both the world model and the actor-critic policy jointly,
+    using model-based reinforcement learning with imagination.
+
+    Attributes:
+        obs_space: Dictionary of observation spaces
+        act_space: Dictionary of action spaces
+        config: Configuration object with hyperparameters
+        enc: Encoder network
+        dyn: RSSM dynamics model
+        dec: Decoder network
+        rew: Reward prediction head
+        con: Continue prediction head (episode termination)
+        pol: Policy network (actor)
+        val: Value network (critic)
+        slowval: Slow-updating target value network
+        opt: Optimizer for all trainable modules
+    """
+
     banner = [
         r"---  ___                           __   ______ ---",
         r"--- |   \ _ _ ___ __ _ _ __  ___ _ \ \ / /__ / ---",
@@ -32,6 +82,28 @@ class Agent(embodied.jax.Agent):
     ]
 
     def __init__(self, obs_space, act_space, config):
+        """Initialize the DreamerV3 agent.
+
+        Creates the world model components (encoder, dynamics, decoder) and
+        actor-critic components (policy, value networks). Sets up the optimizer
+        for joint training of all components.
+
+        Args:
+            obs_space: Dictionary mapping observation names to Space objects.
+                Must include standard keys like 'is_first', 'is_last', 'is_terminal', 'reward'.
+            act_space: Dictionary mapping action names to Space objects.
+                Each space defines the action type (discrete/continuous) and bounds.
+            config: Configuration object containing:
+                - enc: Encoder configuration
+                - dyn: Dynamics (RSSM) configuration
+                - dec: Decoder configuration
+                - rewhead: Reward head configuration
+                - conhead: Continue head configuration
+                - policy: Policy network configuration
+                - value: Value network configuration
+                - opt: Optimizer configuration
+                - loss_scales: Loss weighting coefficients
+        """
         self.obs_space = obs_space
         self.act_space = act_space
         self.config = config
@@ -97,10 +169,28 @@ class Agent(embodied.jax.Agent):
 
     @property
     def policy_keys(self):
+        """Regex pattern for policy-related parameters.
+
+        Returns:
+            str: Regular expression matching parameter keys used by the policy.
+                Includes encoder, dynamics, decoder, and policy network parameters.
+        """
         return "^(enc|dyn|dec|pol)/"
 
     @property
     def ext_space(self):
+        """Define extra input space required beyond observations and actions.
+
+        The agent requires additional inputs for training:
+        - consec: Number of consecutive timesteps (for sequence tracking)
+        - stepid: One-hot encoded timestep ID (temporal position encoding, size 20)
+        - Optionally: Replay context (encoder/dynamics/decoder states) when
+          replay_context > 0
+
+        Returns:
+            dict: Dictionary mapping extra input names to Space objects defining
+                their dtype, shape, and valid ranges.
+        """
         spaces = {}
         spaces["consec"] = elements.Space(np.int32)
         spaces["stepid"] = elements.Space(np.uint8, 20)
@@ -117,6 +207,15 @@ class Agent(embodied.jax.Agent):
         return spaces
 
     def init_policy(self, batch_size):
+        """Initialize policy carry state for inference.
+
+        Args:
+            batch_size: Number of parallel environments/episodes.
+
+        Returns:
+            dict: Initial carry state for the policy, containing RSSM recurrent
+                state (deter, stoch) for each batch element.
+        """
         zeros = lambda x: jnp.zeros((batch_size, *x.shape), x.dtype)
         return (
             self.enc.initial(batch_size),
@@ -126,12 +225,48 @@ class Agent(embodied.jax.Agent):
         )
 
     def init_train(self, batch_size):
+        """Initialize carry state for training.
+
+        Args:
+            batch_size: Number of parallel sequences in training batch.
+
+        Returns:
+            dict: Initial carry state (same as init_policy).
+        """
         return self.init_policy(batch_size)
 
     def init_report(self, batch_size):
+        """Initialize carry state for reporting/evaluation.
+
+        Args:
+            batch_size: Number of parallel sequences for report generation.
+
+        Returns:
+            dict: Initial carry state (same as init_policy).
+        """
         return self.init_policy(batch_size)
 
     def policy(self, carry, obs, mode="train"):
+        """Execute policy to select actions given observations.
+
+        Processes observations through the world model (encoder, dynamics) and
+        policy network to produce actions. Runs in inference mode (no gradients).
+
+        Args:
+            carry: Tuple of (enc_carry, dyn_carry, dec_carry, prevact) containing
+                recurrent state from previous timestep.
+            obs: Dictionary of observations with keys matching obs_space. Must
+                include 'is_first' to detect episode boundaries.
+            mode: Execution mode, either "train" or "eval" (currently unused).
+
+        Returns:
+            tuple: (carry, act, out) where:
+                - carry: Updated carry state for next timestep
+                - act: Dictionary of sampled actions
+                - out: Dictionary of auxiliary outputs including:
+                    - finite: Finiteness checks for debugging
+                    - Optional replay context entries (if replay_context > 0)
+        """
         (enc_carry, dyn_carry, dec_carry, prevact) = carry
         kw = dict(training=False, single=True)
         reset = obs["is_first"]
@@ -161,6 +296,29 @@ class Agent(embodied.jax.Agent):
         return carry, act, out
 
     def train(self, carry, data):
+        """Execute one training step on a batch of sequences.
+
+        Trains both the world model and actor-critic policy using the provided
+        batch of experience sequences. Computes losses, applies gradients, and
+        updates the slow value network.
+
+        Args:
+            carry: Tuple of (enc_carry, dyn_carry, dec_carry) containing recurrent
+                state for the batch.
+            data: Dictionary of training data with shape [batch_size, sequence_length]:
+                - Observations (matching obs_space)
+                - Actions
+                - 'is_first': Episode boundary markers
+                - 'consec': Consecutive timestep counts
+                - 'stepid': One-hot timestep IDs
+                - Optional: Replay context entries (if replay_context > 0)
+
+        Returns:
+            tuple: (carry, outs, metrics) where:
+                - carry: Updated carry state
+                - outs: Dictionary of outputs including optional replay context updates
+                - metrics: Dictionary of training metrics (losses, gradients, etc.)
+        """
         carry, obs, prevact, stepid = self._apply_replay_context(carry, data)
         metrics, (carry, entries, outs, mets) = self.opt(
             self.loss, carry, obs, prevact, training=True, has_aux=True
@@ -184,6 +342,26 @@ class Agent(embodied.jax.Agent):
         return carry, outs, metrics
 
     def loss(self, carry, obs, prevact, training):
+        """Compute combined loss for world model and actor-critic.
+
+        Computes and combines losses for:
+        - World model: Observation reconstruction, reward prediction, continue
+          prediction, dynamics KL divergence
+        - Actor-critic: Policy loss (from imagined trajectories), value loss
+
+        Args:
+            carry: Tuple of (enc_carry, dyn_carry, dec_carry) recurrent state.
+            obs: Dictionary of observations, shape [B, T, ...].
+            prevact: Dictionary of previous actions, shape [B, T, ...].
+            training: Boolean flag for training mode (enables dropout, etc.).
+
+        Returns:
+            tuple: (carry, entries, outs, metrics) where:
+                - carry: Updated carry state tuple
+                - entries: Tuple of (enc_entries, dyn_entries, dec_entries)
+                - outs: Dictionary of auxiliary outputs
+                - metrics: Dictionary of loss values and training metrics
+        """
         enc_carry, dyn_carry, dec_carry = carry
         reset = obs["is_first"]
         B, T = reset.shape
@@ -285,6 +463,19 @@ class Agent(embodied.jax.Agent):
         return loss, (carry, entries, outs, metrics)
 
     def report(self, carry, data):
+        """Generate diagnostic report with visualizations and metrics.
+
+        Creates open-loop predictions and reconstructions for visualization and
+        analysis. Useful for debugging world model quality.
+
+        Args:
+            carry: Tuple of (enc_carry, dyn_carry, dec_carry) recurrent state.
+            data: Dictionary of report data sequences, shape [B, T, ...].
+
+        Returns:
+            tuple: (carry, metrics) where metrics contains diagnostic information
+                including reconstructions, predictions, and open-loop rollouts.
+        """
         if not self.config.report:
             return carry, {}
 
@@ -551,6 +742,27 @@ def repl_loss(
 
 
 def lambda_return(last, term, rew, val, boot, disc, lam):
+    """Compute λ-returns for temporal difference learning.
+
+    Computes bootstrapped returns using TD(λ) with generalized advantage
+    estimation (GAE). Uses geometric weighting between one-step TD and
+    Monte Carlo returns.
+
+    Args:
+        last: Episode end flags, shape [B, T]. True if timestep is last in episode.
+        term: Terminal flags, shape [B, T]. True if episode terminated (not truncated).
+        rew: Rewards, shape [B, T].
+        val: Value estimates, shape [B, T+1]. val[:, -1] is bootstrap value.
+        boot: Bootstrap value for non-terminal states, shape [B]. Used when
+            episode is truncated (last=True, term=False).
+        disc: Discount factor, typically 0.99.
+        lam: Lambda parameter for TD(λ), typically 0.95. Controls mix between
+            1-step TD (lam=0) and Monte Carlo (lam=1).
+
+    Returns:
+        jnp.ndarray: λ-returns for each timestep, shape [B, T]. These serve as
+            targets for value function training.
+    """
     chex.assert_equal_shape((last, term, rew, val, boot))
     rets = [boot[:, -1]]
     live = (1 - f32(term))[:, 1:] * disc
