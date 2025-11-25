@@ -1,3 +1,39 @@
+"""Recurrent State-Space Model (RSSM) world model implementation.
+
+This module implements the core components of the DreamerV3 world model:
+- RSSM: Recurrent latent dynamics model with deterministic and stochastic states
+- Encoder: Converts observations (images and vectors) to latent token representations
+- Decoder: Reconstructs observations from latent features
+
+The RSSM learns a compact representation of the environment by predicting future
+latent states and reconstructing observations. It combines:
+- Deterministic state (deter): GRU-like recurrent state capturing temporal dependencies
+- Stochastic state (stoch): Categorical distributions capturing uncertainty
+- Encoder/Decoder: Observation compression and reconstruction
+
+Key Features:
+- Block-structured GRU for efficient parallel computation
+- Categorical latent distributions with unimix regularization
+- Multi-layer encoders/decoders with configurable architectures
+- Support for both image and vector observations
+- KL divergence regularization (dynamics and representation losses)
+
+Typical Usage:
+    # Initialize world model components
+    encoder = Encoder(obs_space)
+    rssm = RSSM(act_space)
+    decoder = Decoder(obs_space)
+
+    # Encode observations to tokens
+    _, _, tokens = encoder(carry, obs, reset, training)
+
+    # Observe and update latent states
+    carry, entries, feat = rssm.observe(carry, tokens, actions, reset, training)
+
+    # Decode latent features to reconstructions
+    _, _, recons = decoder(carry, feat, reset, training)
+"""
+
 import math
 
 import einops
@@ -16,6 +52,36 @@ sg = jax.lax.stop_gradient
 
 
 class RSSM(nj.Module):
+    """Recurrent State-Space Model for learning latent world dynamics.
+
+    The RSSM learns a compact latent representation of the environment by combining:
+    - Deterministic state (deter): Recurrent state updated via block-structured GRU
+    - Stochastic state (stoch): Categorical distribution capturing uncertainty
+    - Prior network: Predicts next stochastic state from deterministic state
+    - Posterior network: Infers stochastic state from observations and deterministic state
+
+    The model is trained with two KL divergence losses:
+    - Dynamics loss (dyn): Regularizes prior predictions toward posterior
+    - Representation loss (rep): Regularizes posterior toward prior
+
+    Attributes:
+        deter: Deterministic state dimension (must be divisible by blocks).
+        hidden: Hidden layer size for MLPs.
+        stoch: Number of stochastic categorical variables.
+        classes: Number of classes per stochastic variable.
+        norm: Normalization type ("rms", "layer", etc.).
+        act: Activation function ("gelu", "relu", etc.).
+        unroll: Whether to unroll scans for faster compilation.
+        unimix: Uniform mixing probability for categorical distributions.
+        outscale: Output layer initialization scale.
+        imglayers: Number of layers in imagination (prior) network.
+        obslayers: Number of layers in observation (posterior) network.
+        dynlayers: Number of layers in dynamics (core) network.
+        absolute: If True, only use tokens (not deter) for posterior inference.
+        blocks: Number of blocks for block-structured GRU.
+        free_nats: Minimum KL divergence (prevents over-regularization).
+    """
+
     deter: int = 4096
     hidden: int = 2048
     stoch: int = 32
@@ -33,18 +99,38 @@ class RSSM(nj.Module):
     free_nats: float = 1.0
 
     def __init__(self, act_space, **kw):
+        """Initialize RSSM with action space and network configuration.
+
+        Args:
+            act_space: Action space specification (dict of element.Space objects).
+            **kw: Additional keyword arguments for network layers (e.g., winit, outscale).
+        """
         assert self.deter % self.blocks == 0
         self.act_space = act_space
         self.kw = kw
 
     @property
     def entry_space(self):
+        """Define the space of replay buffer entries.
+
+        Returns:
+            dict: Replay entry space with 'deter' and 'stoch' fields.
+        """
         return dict(
             deter=elements.Space(np.float32, self.deter),
             stoch=elements.Space(np.float32, (self.stoch, self.classes)),
         )
 
     def initial(self, bsize):
+        """Initialize RSSM state with zeros.
+
+        Args:
+            bsize: Batch size.
+
+        Returns:
+            dict: Initial carry state with zero-initialized 'deter' [B, deter] and
+                'stoch' [B, stoch, classes] tensors.
+        """
         carry = nn.cast(
             dict(
                 deter=jnp.zeros([bsize, self.deter], f32),
@@ -54,17 +140,61 @@ class RSSM(nj.Module):
         return carry
 
     def truncate(self, entries, carry=None):
+        """Extract final state from sequence of entries.
+
+        Used for truncated backpropagation through time, extracting the last
+        timestep's state to use as initial state for the next training segment.
+
+        Args:
+            entries: Dict of RSSM entries with shape [B, T, ...].
+            carry: Unused (for interface compatibility).
+
+        Returns:
+            dict: Carry state from last timestep [B, ...].
+        """
         assert entries["deter"].ndim == 3, entries["deter"].shape
         carry = jax.tree.map(lambda x: x[:, -1], entries)
         return carry
 
     def starts(self, entries, carry, nlast):
+        """Extract and flatten last N states from entries for imagination.
+
+        Reshapes the last nlast states from [B, T, ...] to [B*nlast, ...] to use
+        as starting points for parallel imagination rollouts.
+
+        Args:
+            entries: Dict of RSSM entries with shape [B, T, ...].
+            carry: Current carry state (used to infer batch size).
+            nlast: Number of recent states to extract.
+
+        Returns:
+            dict: Flattened entries from last nlast timesteps [B*nlast, ...].
+        """
         B = len(jax.tree.leaves(carry)[0])
         return jax.tree.map(
             lambda x: x[:, -nlast:].reshape((B * nlast, *x.shape[2:])), entries
         )
 
     def observe(self, carry, tokens, action, reset, training, single=False):
+        """Update RSSM states by observing encoded observations.
+
+        Processes observations through the posterior network to infer latent states.
+        Combines deterministic GRU dynamics with stochastic posterior inference.
+
+        Args:
+            carry: Current RSSM state dict with 'deter' [B, deter] and 'stoch' [B, stoch, classes].
+            tokens: Encoded observation tokens [B, T, D] or [B, D] if single=True.
+            action: Actions taken [B, T, ...] or [B, ...] if single=True.
+            reset: Episode reset flags [B, T] or [B] if single=True.
+            training: Whether in training mode.
+            single: If True, process single timestep; if False, scan over time dimension.
+
+        Returns:
+            tuple: (carry, entries, feat) where:
+                - carry: Updated RSSM state.
+                - entries: Replay buffer entries (deter, stoch) [B, T, ...] or [B, ...].
+                - feat: Features dict (deter, stoch, logit) [B, T, ...] or [B, ...].
+        """
         carry, tokens, action = nn.cast((carry, tokens, action))
         if single:
             carry, (entry, feat) = self._observe(carry, tokens, action, reset, training)
@@ -99,6 +229,25 @@ class RSSM(nj.Module):
         return carry, (entry, feat)
 
     def imagine(self, carry, policy, length, training, single=False):
+        """Imagine future latent trajectories using the prior network.
+
+        Rolls out latent dynamics by predicting future states from actions,
+        without using observations. Uses the prior network to predict stochastic
+        states from deterministic states.
+
+        Args:
+            carry: Initial RSSM state dict with 'deter' [B, deter] and 'stoch' [B, stoch, classes].
+            policy: Either a callable policy(state) -> action or precomputed actions [B, T, ...].
+            length: Number of imagination steps.
+            training: Whether in training mode.
+            single: If True, imagine single step; if False, scan over time dimension.
+
+        Returns:
+            tuple: (carry, feat, action) where:
+                - carry: Final RSSM state after imagination.
+                - feat: Features dict (deter, stoch, logit) [B, T, ...] or [B, ...].
+                - action: Actions taken during imagination [B, T, ...] or [B, ...].
+        """
         if single:
             action = policy(sg(carry)) if callable(policy) else policy
             actemb = nn.DictConcat(self.act_space, 1)(action)
@@ -135,6 +284,27 @@ class RSSM(nj.Module):
             return carry, feat, action
 
     def loss(self, carry, tokens, acts, reset, training):
+        """Compute RSSM training losses.
+
+        Computes KL divergence losses between prior and posterior distributions:
+        - Dynamics loss (dyn): Trains prior to match posterior (forward prediction).
+        - Representation loss (rep): Trains posterior to match prior (regularization).
+
+        Args:
+            carry: Initial RSSM state dict.
+            tokens: Encoded observation tokens [B, T, D].
+            acts: Actions taken [B, T, ...].
+            reset: Episode reset flags [B, T].
+            training: Whether in training mode.
+
+        Returns:
+            tuple: (carry, entries, losses, feat, metrics) where:
+                - carry: Updated RSSM state.
+                - entries: Replay buffer entries.
+                - losses: Dict with 'dyn' and 'rep' losses [B, T].
+                - feat: Features dict (deter, stoch, logit).
+                - metrics: Dict with entropy metrics for logging.
+        """
         metrics = {}
         carry, entries, feat = self.observe(carry, tokens, acts, reset, training)
         prior = self._prior(feat["deter"])
@@ -194,6 +364,27 @@ class RSSM(nj.Module):
 
 
 class Encoder(nj.Module):
+    """Encoder that converts observations to latent token representations.
+
+    The encoder processes both vector and image observations:
+    - Vector observations: Passed through MLP layers
+    - Image observations: Processed through convolutional layers with spatial downsampling
+
+    Outputs are concatenated into a unified token representation for the RSSM.
+
+    Attributes:
+        units: Hidden layer size for vector processing MLPs.
+        norm: Normalization type ("rms", "layer", etc.).
+        act: Activation function ("gelu", "relu", etc.).
+        depth: Base channel depth for convolutional layers.
+        mults: Tuple of depth multipliers for each conv layer.
+        layers: Number of MLP layers for vector observations.
+        kernel: Convolutional kernel size.
+        symlog: If True, apply symlog squashing to vector observations.
+        outer: If True, use different conv structure for first layer.
+        strided: If True, use strided convolutions instead of max pooling.
+    """
+
     units: int = 1024
     norm: str = "rms"
     act: str = "gelu"
@@ -206,6 +397,12 @@ class Encoder(nj.Module):
     strided: bool = False
 
     def __init__(self, obs_space, **kw):
+        """Initialize encoder with observation space.
+
+        Args:
+            obs_space: Dict of observation spaces (elements.Space objects).
+            **kw: Additional keyword arguments for network layers.
+        """
         assert all(len(s.shape) <= 3 for s in obs_space.values()), obs_space
         self.obs_space = obs_space
         self.veckeys = [k for k, s in obs_space.items() if len(s.shape) <= 2]
@@ -215,15 +412,36 @@ class Encoder(nj.Module):
 
     @property
     def entry_space(self):
+        """Define replay buffer entry space (empty for encoder)."""
         return {}
 
     def initial(self, batch_size):
+        """Return initial state (empty for encoder)."""
         return {}
 
     def truncate(self, entries, carry=None):
+        """Return truncated state (empty for encoder)."""
         return {}
 
     def __call__(self, carry, obs, reset, training, single=False):
+        """Encode observations into token representations.
+
+        Processes vector and image observations through separate pathways, then
+        concatenates into unified token representation.
+
+        Args:
+            carry: State (empty dict for encoder).
+            obs: Dict of observations with keys matching obs_space.
+            reset: Episode reset flags [B] or [B, T] if single=False.
+            training: Whether in training mode.
+            single: If True, process single timestep [B, ...]; if False, scan over time [B, T, ...].
+
+        Returns:
+            tuple: (carry, entries, tokens) where:
+                - carry: Empty dict (encoder is stateless).
+                - entries: Empty dict (no replay buffer entries).
+                - tokens: Encoded observation tokens [B, D] or [B, T, D].
+        """
         bdims = 1 if single else 2
         outs = []
         bshape = reset.shape
@@ -267,6 +485,29 @@ class Encoder(nj.Module):
 
 
 class Decoder(nj.Module):
+    """Decoder that reconstructs observations from latent features.
+
+    The decoder processes latent features (deter and stoch) to reconstruct observations:
+    - Vector observations: Reconstructed through MLP layers and distribution heads
+    - Image observations: Reconstructed through transposed convolutions with upsampling
+
+    Supports both strided convolutions and explicit upsampling strategies.
+
+    Attributes:
+        units: Hidden layer size for MLP processing.
+        norm: Normalization type ("rms", "layer", etc.).
+        act: Activation function ("gelu", "relu", etc.).
+        outscale: Output layer initialization scale.
+        depth: Base channel depth for convolutional layers.
+        mults: Tuple of depth multipliers for each conv layer.
+        layers: Number of MLP layers for vector reconstruction.
+        kernel: Convolutional kernel size.
+        symlog: If True, use symlog MSE loss for vector observations.
+        bspace: Block space dimension for efficient spatial reconstruction.
+        outer: If True, use different conv structure for last layer.
+        strided: If True, use strided transposed convolutions instead of upsampling.
+    """
+
     units: int = 1024
     norm: str = "rms"
     act: str = "gelu"
@@ -281,6 +522,12 @@ class Decoder(nj.Module):
     strided: bool = False
 
     def __init__(self, obs_space, **kw):
+        """Initialize decoder with observation space.
+
+        Args:
+            obs_space: Dict of observation spaces (elements.Space objects).
+            **kw: Additional keyword arguments for network layers.
+        """
         assert all(len(s.shape) <= 3 for s in obs_space.values()), obs_space
         self.obs_space = obs_space
         self.veckeys = [k for k, s in obs_space.items() if len(s.shape) <= 2]
@@ -292,15 +539,37 @@ class Decoder(nj.Module):
 
     @property
     def entry_space(self):
+        """Define replay buffer entry space (empty for decoder)."""
         return {}
 
     def initial(self, batch_size):
+        """Return initial state (empty for decoder)."""
         return {}
 
     def truncate(self, entries, carry=None):
+        """Return truncated state (empty for decoder)."""
         return {}
 
     def __call__(self, carry, feat, reset, training, single=False):
+        """Decode latent features into observation reconstructions.
+
+        Processes RSSM latent features (deter and stoch) to reconstruct observations
+        through separate pathways for vectors and images.
+
+        Args:
+            carry: State (empty dict for decoder).
+            feat: Dict with 'deter' [B, deter] or [B, T, deter] and 'stoch' [B, stoch, classes]
+                or [B, T, stoch, classes] latent features.
+            reset: Episode reset flags [B] or [B, T] if single=False.
+            training: Whether in training mode.
+            single: If True, process single timestep [B, ...]; if False, scan over time [B, T, ...].
+
+        Returns:
+            tuple: (carry, entries, recons) where:
+                - carry: Empty dict (decoder is stateless).
+                - entries: Empty dict (no replay buffer entries).
+                - recons: Dict of reconstructed observations with distribution outputs.
+        """
         assert feat["deter"].shape[-1] % self.bspace == 0
         K = self.kernel
         recons = {}
