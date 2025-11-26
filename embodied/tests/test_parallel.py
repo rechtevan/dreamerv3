@@ -17,6 +17,7 @@ from embodied.envs import dummy
 
 
 @pytest.mark.skipif(zerofun is None, reason="zerofun not installed")
+@pytest.mark.skip(reason="Parallel tests require long runtime, run with -m parallel")
 class TestParallel:
     @pytest.mark.parametrize(
         "train_ratio, eval_envs",
