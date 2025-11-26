@@ -1,3 +1,34 @@
+"""Neural network building blocks and utilities for JAX/Ninjax.
+
+This module provides a comprehensive set of neural network components used
+throughout DreamerV3:
+
+Utility Functions:
+- cast, act, init: Type casting, activation function lookup, initializer creation
+- dropout: Training-aware dropout
+- symlog/symexp: Symmetric log/exp transformations for stable value prediction
+- where, mask, available: Conditional operations and masking utilities
+- ensure_dtypes: Mixed-precision dtype handling with custom gradients
+- rms: Root mean square computation across pytrees
+- rope: Rotary positional embeddings for transformers
+
+Core Layers:
+- Initializer: Flexible weight initialization (truncated normal, uniform, etc.)
+- Linear, BlockLinear: Dense layers with optional features
+- Conv2D, Conv3D: Convolutional layers
+- Norm: Layer normalization (RMS, LayerNorm)
+- Embed, DictEmbed: Embedding layers for discrete/dict inputs
+
+Advanced Components:
+- Attention: Multi-head self-attention with optional masking
+- MLP: Multi-layer perceptron with configurable normalization
+- Transformer: Full transformer block with attention and MLP
+- GRU: Gated Recurrent Unit implementation
+
+All components support mixed-precision training via COMPUTE_DTYPE and integrate
+with Ninjax for stateful module management.
+"""
+
 import functools
 import math
 from collections.abc import Callable
@@ -17,6 +48,15 @@ f32 = jnp.float32
 
 
 def cast(xs, force=False):
+    """Cast floating-point arrays to COMPUTE_DTYPE for mixed-precision training.
+
+    Args:
+        xs: PyTree of arrays to cast.
+        force: If True, cast all arrays. If False, only cast floating-point arrays.
+
+    Returns:
+        PyTree with floating-point arrays cast to COMPUTE_DTYPE.
+    """
     if force:
         should = lambda x: True
     else:
@@ -25,6 +65,20 @@ def cast(xs, force=False):
 
 
 def act(name):
+    """Get activation function by name.
+
+    Supports JAX built-in activations plus custom variants:
+    - 'mish': x * tanh(softplus(x))
+    - 'relu2': relu(x)^2
+    - 'swiglu': SwiGLU activation (splits input in half)
+    - Other names are looked up from jax.nn (relu, silu, gelu, etc.)
+
+    Args:
+        name: Activation function name string.
+
+    Returns:
+        Activation function callable.
+    """
     if name == "none":
         return lambda x: x
     elif name == "mish":
@@ -53,6 +107,16 @@ def init(name):
 
 
 def dropout(x, prob, training):
+    """Apply dropout during training for regularization.
+
+    Args:
+        x: Input array.
+        prob: Dropout probability (fraction of units to drop).
+        training: If False, dropout is disabled (inference mode).
+
+    Returns:
+        Array with dropout applied (scaled during training).
+    """
     if not prob or not training:
         return x
     keep = jax.random.bernoulli(nj.seed(), 1.0 - prob, x.shape)
@@ -60,10 +124,31 @@ def dropout(x, prob, training):
 
 
 def symlog(x):
+    """Symmetric logarithm: sign(x) * log(1 + |x|).
+
+    Compresses large values while preserving sign and being smooth at zero.
+    Used for stable value prediction in reinforcement learning.
+
+    Args:
+        x: Input array.
+
+    Returns:
+        Symmetric log of x.
+    """
     return jnp.sign(x) * jnp.log1p(jnp.abs(x))
 
 
 def symexp(x):
+    """Symmetric exponential: sign(x) * (exp(|x|) - 1).
+
+    Inverse of symlog. Expands compressed values.
+
+    Args:
+        x: Input array (typically symlog-compressed values).
+
+    Returns:
+        Symmetric exp of x.
+    """
     return jnp.sign(x) * jnp.expm1(jnp.abs(x))
 
 
@@ -130,6 +215,17 @@ ensure_dtypes.defvjp(ensure_dtypes_fwd, ensure_dtypes_bwd)
 
 
 def rms(xs):
+    """Compute root mean square (RMS) across all arrays in a PyTree.
+
+    Flattens the PyTree, computes the RMS of all elements combined.
+    Used for monitoring gradient and parameter statistics during training.
+
+    Args:
+        xs: PyTree of arrays.
+
+    Returns:
+        Scalar RMS value.
+    """
     xs = jax.tree.leaves(xs)
     count = sum(x.size for x in xs)
     sumsq = jnp.stack([f32(jnp.square(x).sum()) for x in xs]).sum()
@@ -154,7 +250,44 @@ def rope(x, ts=None, inverse=False, maxlen=4096):
 
 
 class Initializer:
+    """Flexible weight initializer with multiple distribution strategies.
+
+    Provides various weight initialization schemes commonly used in deep learning:
+    - 'zeros': All zeros
+    - 'uniform': Uniform distribution scaled by fan
+    - 'normal': Normal distribution scaled by fan
+    - 'trunc_normal': Truncated normal (default, recommended)
+    - 'normed': Normalized columns (for embedding-like layers)
+
+    The fan mode determines the scaling factor:
+    - 'in': Scale by fan-in (default, good for forward pass)
+    - 'out': Scale by fan-out (good for backward pass)
+    - 'avg': Scale by average of fan-in and fan-out
+    - 'none': No scaling
+
+    Attributes:
+        dist: Distribution type ('trunc_normal', 'uniform', 'normal', etc.).
+        fan: Fan mode ('in', 'out', 'avg', 'none').
+        scale: Additional multiplicative scale factor.
+
+    Example:
+        >>> # Truncated normal with fan-in scaling
+        >>> init = Initializer('trunc_normal', 'in', scale=1.0)
+        >>> weights = init((784, 256))  # Shape: (fan_in, fan_out)
+        >>>
+        >>> # Uniform with fan-out scaling
+        >>> init = Initializer('uniform', 'out', scale=2.0)
+        >>> weights = init((10, 512))
+    """
+
     def __init__(self, dist="trunc_normal", fan="in", scale=1.0):
+        """Initialize the weight initializer.
+
+        Args:
+            dist: Distribution type ('trunc_normal', 'uniform', 'normal', 'normed', 'zeros').
+            fan: Fan mode ('in', 'out', 'avg', 'none') for scaling.
+            scale: Additional scale factor applied after distribution.
+        """
         self.dist = dist
         self.fan = fan
         self.scale = scale
@@ -240,12 +373,39 @@ class Embed(nj.Module):
 
 
 class Linear(nj.Module):
+    """Fully-connected (dense) layer with configurable initialization.
+
+    Standard linear transformation: y = x @ W + b
+    Supports multi-dimensional output shapes (e.g., (H, W) for spatial outputs).
+
+    Attributes:
+        units: Output shape. Can be int or tuple of ints.
+        bias: If True, include bias term (default: True).
+        winit: Weight initializer (default: truncated normal).
+        binit: Bias initializer (default: zeros).
+        outscale: Scale factor applied to weight initialization.
+
+    Example:
+        >>> # Standard dense layer
+        >>> layer = Linear(256)
+        >>> y = layer(x)  # x: [B, D_in] -> y: [B, 256]
+        >>>
+        >>> # Multi-dimensional output
+        >>> layer = Linear((8, 8, 64))
+        >>> y = layer(x)  # x: [B, D] -> y: [B, 8, 8, 64]
+    """
+
     bias: bool = True
     winit: str | Callable = Initializer("trunc_normal")
     binit: str | Callable = Initializer("zeros")
     outscale: float = 1.0
 
     def __init__(self, units):
+        """Initialize the linear layer.
+
+        Args:
+            units: Output dimensionality. Can be int or tuple for multi-dim output.
+        """
         self.units = (units,) if isinstance(units, int) else tuple(units)
 
     def __call__(self, x):
@@ -441,7 +601,7 @@ class Attention(nj.Module):
 
     def __call__(self, x, mask=None, ts=None, training=True):
         kw = dict(bias=self.bias, winit=self.winit, binit=self.binit)
-        B, T, D = x.shape
+        B, _T, D = x.shape
         kv_heads = self.kv_heads or self.heads
         assert self.heads % kv_heads == 0
         head_ratio = self.heads // kv_heads
@@ -585,6 +745,34 @@ class DictEmbed(nj.Module):
 
 
 class MLP(nj.Module):
+    """Multi-Layer Perceptron with normalization and activation.
+
+    Standard feedforward network with repeated (Linear -> Norm -> Activation) blocks.
+    Commonly used as the feedforward component in transformers or as a standalone
+    function approximator.
+
+    Each layer applies: x = act(norm(linear(x)))
+    Default configuration uses SiLU activation and RMS normalization.
+
+    Attributes:
+        layers: Number of hidden layers (default: 5).
+        units: Hidden layer dimensionality (default: 1024).
+        act: Activation function name (default: 'silu').
+        norm: Normalization type ('rms', 'layer', or 'none') (default: 'rms').
+        bias: Include bias in linear layers (default: True).
+        winit: Weight initializer (default: truncated normal).
+        binit: Bias initializer (default: zeros).
+
+    Example:
+        >>> # Standard 5-layer MLP
+        >>> mlp = MLP(layers=5, units=512)
+        >>> y = mlp(x)  # x: [B, D_in] -> y: [B, 512]
+        >>>
+        >>> # Custom MLP with different activation
+        >>> mlp = MLP(layers=3, units=256, act='relu', norm='layer')
+        >>> y = mlp(x)
+    """
+
     act: str = "silu"
     norm: str = "rms"
     bias: bool = True
@@ -592,6 +780,12 @@ class MLP(nj.Module):
     binit: str | Callable = Initializer("zeros")
 
     def __init__(self, layers=5, units=1024):
+        """Initialize the MLP.
+
+        Args:
+            layers: Number of hidden layers.
+            units: Dimensionality of each hidden layer.
+        """
         self.layers = layers
         self.units = units
         self.kw = dict(bias=self.bias, winit=self.winit, binit=self.binit)
