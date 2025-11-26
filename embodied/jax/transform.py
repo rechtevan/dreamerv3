@@ -1,5 +1,6 @@
 import re
 import threading
+import typing
 from collections import Counter
 
 import jax
@@ -15,7 +16,7 @@ LOCK = threading.Lock()
 # Add tracer_sharding attribute to abstract values. This allows us to use
 # shard_map based on layer callback shardings, even though JAX does not
 # currently expose the shardings of tracer objects.
-TRACER_SHARDINGS = {}
+TRACER_SHARDINGS: dict[typing.Any, typing.Any] = {}
 
 
 def init(
@@ -41,8 +42,8 @@ def init(
 
     fn = init(fn)
 
-    def fn(*args, inner=fn):
-        params, seed, *args = args
+    def fn(*args, inner=fn):  # type: ignore[no-redef]
+        params, seed, *args = args  # type: ignore[assignment]
         old = nn.LAYER_CALLBACK
         nn.LAYER_CALLBACK = create_layer_callback(mesh, act_partition_rules)
         params, _ = inner(params, *args, seed=seed)
@@ -82,12 +83,12 @@ def apply(
     if single_output:
         assert len(out_shardings) == 1
 
-    def fn(*args, inner=fn):
+    def fn(*args, inner=fn):  # type: ignore[no-redef]
         if donate_params:
-            donated, allocated, seed, *args = args
+            donated, allocated, seed, *args = args  # type: ignore[assignment]
             params = {**donated, **allocated}
         else:
-            params, seed, *args = args
+            params, seed, *args = args  # type: ignore[assignment]
         if use_shardmap and len(mesh.devices) > 1 and split_rng:
             seed = jax.random.fold_in(seed, jax.lax.axis_index("d"))
         params, outs = inner(params, *args, seed=seed)
@@ -108,7 +109,7 @@ def apply(
         ispecs = list(jax.tree.map(lambda s: s.spec, in_shardings))
         for i in sorted(static_argnums):
             ispecs.insert(i, None)
-        ispecs = tuple(ispecs)
+        ispecs = tuple(ispecs)  # type: ignore[assignment]
         ospecs = jax.tree.map(lambda s: s.spec, out_shardings)
         fn = shard_map(fn, mesh, ispecs, ospecs, check_rep=False)
 
@@ -170,7 +171,7 @@ def create_layer_callback(mesh, partition_rules):
 def resolve_rules(params, partition_rules, mesh):
     if len(partition_rules) == 0:
         partition_rules = [(".*", P())]
-    params_spec, grouping = dict(), dict()
+    params_spec, grouping = dict(), dict()  # type: ignore[var-annotated]
     for k in params.keys():
         for rule, spec in partition_rules:
             if re.search(rule, k):
@@ -193,8 +194,8 @@ def print_grouping(grouping):
         if len(ps) == 0:
             continue
         print(f'Partition rule "{rule}" matches {len(ps)} param tensors')
-        ks = ["/".join(p.split("/")[-2:]) for p in ps]
-        ks = Counter(ks)
-        ks = ks.most_common(len(ks))
+        ks_list = ["/".join(p.split("/")[-2:]) for p in ps]
+        ks_counter = Counter(ks_list)
+        ks = ks_counter.most_common(len(ks_counter))
         ks = [f"- .../{k}: {v}" for k, v in ks]
         print("\n".join(ks))

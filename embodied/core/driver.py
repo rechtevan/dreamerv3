@@ -1,6 +1,7 @@
 import time
+import typing
 
-import cloudpickle
+import cloudpickle  # type: ignore
 import elements
 import numpy as np
 import portal
@@ -29,8 +30,8 @@ class Driver:
             self.envs = [fn() for fn in make_env_fns]
             self.act_space = self.envs[0].act_space
         self.callbacks = []
-        self.acts = None
-        self.carry = None
+        self.acts: dict[str, np.ndarray] | None = None
+        self.carry: typing.Any = None
         self.reset()
 
     def reset(self, init_policy=None):
@@ -57,15 +58,16 @@ class Driver:
 
     def _step(self, policy, step, episode):
         acts = self.acts
+        assert acts is not None  # Always set by reset()
         assert all(len(x) == self.length for x in acts.values())
         assert all(isinstance(v, np.ndarray) for v in acts.values())
         acts = [{k: v[i] for k, v in acts.items()} for i in range(self.length)]
         if self.parallel:
             [pipe.send(("step", act)) for pipe, act in zip(self.pipes, acts)]
-            obs = [self._receive(pipe) for pipe in self.pipes]
+            obs_list = [self._receive(pipe) for pipe in self.pipes]
         else:
-            obs = [env.step(act) for env, act in zip(self.envs, acts)]
-        obs = {k: np.stack([x[k] for x in obs]) for k in obs[0].keys()}
+            obs_list = [env.step(act) for env, act in zip(self.envs, acts)]
+        obs = {k: np.stack([x[k] for x in obs_list]) for k in obs_list[0].keys()}
         logs = {k: v for k, v in obs.items() if k.startswith("log/")}
         obs = {k: v for k, v in obs.items() if not k.startswith("log/")}
         assert all(len(x) == self.length for x in obs.values()), obs

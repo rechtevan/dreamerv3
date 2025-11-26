@@ -164,7 +164,7 @@ class Agent(embodied.jax.Agent):
 
         scales = self.config.loss_scales.copy()
         rec = scales.pop("rec")
-        scales.update({k: rec for k in dec_space})
+        scales.update(dict.fromkeys(dec_space, rec))
         self.scales = scales
 
     @property
@@ -276,7 +276,7 @@ class Agent(embodied.jax.Agent):
         )
         dec_entry = {}
         if dec_carry:
-            dec_carry, dec_entry, recons = self.dec(dec_carry, feat, reset, **kw)
+            dec_carry, dec_entry, _recons = self.dec(dec_carry, feat, reset, **kw)
         policy = self.pol(self.feat2tensor(feat), bdims=1)
         act = sample(policy)
         out = {}
@@ -435,7 +435,7 @@ class Agent(embodied.jax.Agent):
                 lambda x: x[:, -K:], (feat, last, term, rew, boot)
             )
             inp = self.feat2tensor(feat)
-            los, reploss_out, mets = repl_loss(
+            los, _reploss_out, mets = repl_loss(
                 last,
                 term,
                 rew,
@@ -480,13 +480,13 @@ class Agent(embodied.jax.Agent):
             return carry, {}
 
         carry, obs, prevact, _ = self._apply_replay_context(carry, data)
-        (enc_carry, dyn_carry, dec_carry) = carry
+        (_enc_carry, dyn_carry, dec_carry) = carry
         B, T = obs["is_first"].shape
         RB = min(6, B)
         metrics = {}
 
         # Train metrics
-        _, (new_carry, entries, outs, mets) = self.loss(
+        _, (new_carry, _entries, outs, mets) = self.loss(
             carry, obs, prevact, training=False
         )
         mets.update(mets)

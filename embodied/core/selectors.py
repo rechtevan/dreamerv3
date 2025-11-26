@@ -23,6 +23,7 @@ Some selectors (Prioritized, Mixture) also support:
 
 import collections
 import threading
+import typing
 
 import numpy as np
 
@@ -40,7 +41,7 @@ class Fifo:
 
     def __init__(self):
         """Initialize an empty FIFO queue."""
-        self.queue = collections.deque()
+        self.queue: collections.deque[typing.Any] = collections.deque()
 
     def __call__(self):
         """Sample the oldest sequence key.
@@ -287,7 +288,7 @@ class Recency:
         Returns:
             Sampled age index in the range [0, len(uprobs)).
         """
-        path = []
+        path: list[int] = []
         for level, prob in enumerate(tree):
             p = prob
             for segment in path:

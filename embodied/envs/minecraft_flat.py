@@ -47,7 +47,7 @@ class Climb(embodied.Wrapper):
 
     def step(self, action):
         obs = self.env.step(action)
-        x, y, z = obs["log/player_pos"]
+        _x, y, _z = obs["log/player_pos"]
         height = np.float32(y)
         if obs["is_first"]:
             self._previous = height

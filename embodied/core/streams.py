@@ -36,6 +36,7 @@ Typical usage:
 import functools
 import queue
 import threading
+import typing
 
 import elements
 import numpy as np
@@ -162,7 +163,7 @@ class Prefetch(base.Stream):
         self.state = self._getstate()
         self.requests = threading.Semaphore(amount)
         self.amount = amount
-        self.queue = queue.Queue()
+        self.queue: queue.Queue[typing.Any] = queue.Queue()
         self.worker = portal.Thread(self._worker)
         self.started = False
 
@@ -355,6 +356,7 @@ class Consec(base.Stream):
         if self.index >= self.consec:
             self.index = 0
         if self.index == 0:
+            assert self.it is not None  # Set by __iter__
             self.current = next(self.it)
             available = self.current["is_first"].shape[-1]
             assert self.length * self.consec + self.prefix <= available, (
@@ -370,6 +372,7 @@ class Consec(base.Stream):
                     self.prefix,
                     available,
                 )
+        assert self.current is not None  # Set earlier in __next__
         start = self.index * self.length
         stop = start + (self.length + self.prefix)
         chunk = {k: v[:, start:stop] for k, v in self.current.items()}
@@ -467,6 +470,7 @@ class Zip(base.Stream):
         Raises:
             StopIteration: If any source is exhausted.
         """
+        assert self.iterators is not None  # Set by __iter__
         parts = [next(x) for x in self.iterators]
         result = elements.tree.map(lambda *el: np.concatenate(el), *parts)
         return result
@@ -477,6 +481,7 @@ class Zip(base.Stream):
         Returns:
             List of checkpoint states, one per source iterator.
         """
+        assert self.iterators is not None  # Set by __iter__
         return [x.save() for x in self.iterators]
 
     def load(self, data):
@@ -488,6 +493,7 @@ class Zip(base.Stream):
         Raises:
             AssertionError: If data length doesn't match number of sources.
         """
+        assert self.iterators is not None  # Set by __iter__
         assert len(data) == len(self.iterators)
         [it.load(d) for it, d in zip(self.iterators, data)]
 
@@ -564,6 +570,7 @@ class Map(base.Stream):
             Any exception raised by the transformation function.
         """
         assert self.started
+        assert self.iterator is not None  # Set by __iter__
         return self.fn(next(self.iterator))
 
     def save(self):
@@ -572,6 +579,7 @@ class Map(base.Stream):
         Returns:
             Checkpoint state from the underlying source iterator.
         """
+        assert self.iterator is not None  # Set by __iter__
         return self.iterator.save()
 
     def load(self, data):
@@ -580,6 +588,7 @@ class Map(base.Stream):
         Args:
             data: Checkpoint state to restore to source iterator.
         """
+        assert self.iterator is not None  # Set by __iter__
         self.iterator.load(data)
 
 

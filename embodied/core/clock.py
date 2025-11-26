@@ -70,9 +70,9 @@ def _start_server(port, replicas):
         port: Port number to bind the server to.
         replicas: Total number of client replicas that will connect.
     """
-    clocks = []
-    requests = []
-    result = [None]
+    clocks: list[list[float]] = []
+    requests: list[float] = []
+    result: list[int | None] = [None]
     receive = threading.Barrier(replicas)
     respond = threading.Barrier(replicas)
 

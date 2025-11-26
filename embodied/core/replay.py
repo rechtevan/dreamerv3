@@ -1,4 +1,5 @@
 import threading
+import typing
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial as bind
@@ -35,7 +36,7 @@ class Replay:
         self.refs_lock = threading.RLock()
 
         self.items = {}
-        self.fifo = deque()
+        self.fifo: deque[typing.Any] = deque()
         self.itemid = 0
 
         self.current = {}
@@ -45,7 +46,7 @@ class Replay:
         self.online = online
         if online:
             self.lengths = defaultdict(int)
-            self.queue = deque()
+            self.queue: deque[typing.Any] = deque()
 
         if directory:
             self.directory = elements.Path(directory)
@@ -141,9 +142,10 @@ class Replay:
         self.metrics["updates"] += int(np.prod(stepid.shape[:-1]))
         if priority is not None:
             assert priority.ndim == 2, priority.shape
-            self.sampler.prioritize(
-                stepid.reshape((-1, stepid.shape[-1])), priority.flatten()
-            )
+            if hasattr(self.sampler, "prioritize"):
+                self.sampler.prioritize(
+                    stepid.reshape((-1, stepid.shape[-1])), priority.flatten()
+                )
         if data:
             for i, stepid in enumerate(stepid):
                 stepid = stepid[0].tobytes()
@@ -188,7 +190,7 @@ class Replay:
     def _remove(self):
         itemid = self.fifo.popleft()
         del self.sampler[itemid]
-        chunkid, index = self.items.pop(itemid)
+        chunkid, _index = self.items.pop(itemid)
         with self.refs_lock:
             self.refs[chunkid] -= 1
             if self.refs[chunkid] < 1:
@@ -385,17 +387,17 @@ class Replay:
         if not chunks:
             return 0
         chunks = list(reversed(sorted([elements.Path(x).stem for x in chunks])))
-        times, uuids, succs, lengths = zip(*[x.split("-") for x in chunks])
-        uuids = [elements.UUID(x) for x in uuids]
-        succs = [elements.UUID(x) for x in succs]
-        lengths = {k: int(v) for k, v in zip(uuids, lengths)}
-        future = {}
-        for uuid, succ in zip(uuids, succs):
-            future[uuid] = lengths[uuid] + future.get(succ, 0)
+        _times, uuids, succs, lengths = zip(*[x.split("-") for x in chunks])
+        uuids_list = [elements.UUID(x) for x in uuids]
+        succs_list = [elements.UUID(x) for x in succs]
+        lengths_dict = {k: int(v) for k, v in zip(uuids_list, lengths)}
+        future: dict[typing.Any, int] = {}
+        for uuid, succ in zip(uuids_list, succs_list):
+            future[uuid] = lengths_dict[uuid] + future.get(succ, 0)
         numitems = {}
-        for uuid, succ in zip(uuids, succs):
-            numitems[uuid] = lengths[uuid] + 1 - self.length + future.get(succ, 0)
-        numitems = {k: np.clip(v, 0, lengths[k]) for k, v in numitems.items()}
+        for uuid, succ in zip(uuids_list, succs_list):
+            numitems[uuid] = lengths_dict[uuid] + 1 - self.length + future.get(succ, 0)
+        numitems = {k: np.clip(v, 0, lengths_dict[k]) for k, v in numitems.items()}
         return numitems
 
     def _notempty(self, reason=False):

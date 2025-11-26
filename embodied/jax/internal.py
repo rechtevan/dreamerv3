@@ -178,10 +178,10 @@ def _to_local(x):
             ms = math.prod(mesh.shape[si] for si in s)
             lms = math.prod(mesh.local_mesh.shape[si] for si in s)
         shard_shape.append(d // ms * lms)
-    shard_shape = tuple(shard_shape)
+    shard_shape = tuple(shard_shape)  # type: ignore[assignment]
     arrs = [arr.data for arr in x.addressable_shards]
     sharding_local = jax.sharding.NamedSharding(mesh.local_mesh, spec)
-    x = jax.make_array_from_single_device_arrays(shard_shape, sharding_local, arrs)
+    x = jax.make_array_from_single_device_arrays(shard_shape, sharding_local, arrs)  # type: ignore[arg-type]
     return x
 
 
@@ -207,9 +207,9 @@ def _to_global(x, global_sharding):
             ms = math.prod(global_sharding.mesh.shape[si] for si in s)
             lms = math.prod(sharding.mesh.shape[si] for si in s)
         shard_shape.append(d // lms * ms)
-    shard_shape = tuple(shard_shape)
+    shard_shape = tuple(shard_shape)  # type: ignore[assignment]
     arrs = [arr.data for arr in x.addressable_shards]
-    x = jax.make_array_from_single_device_arrays(shard_shape, global_sharding, arrs)
+    x = jax.make_array_from_single_device_arrays(shard_shape, global_sharding, arrs)  # type: ignore[arg-type]
     return x
 
 
@@ -249,7 +249,7 @@ def grouped_ckpt_fns(params, chunksize):
             else:
                 groups.append(keys)
                 keys, size = [k], v.nbytes
-        keys and groups.append(keys)
+        keys and groups.append(keys)  # type: ignore[func-returns-value]
     assert sum(len(keys) for keys in groups) == len(params)
     assert all(len(keys) for keys in groups)
     msg = f"Compiling {len(groups)} checkpoint groups..."
@@ -280,8 +280,8 @@ def ckpt_fn(params, compile=True):
     inspec = {k: struct(params[k], mirrored) for k in keys}
     shard_fn = jax.jit(lambda x: x, (mirrored,), original).lower(inspec)
     if compile:
-        gather_fn = gather_fn.compile()
-        shard_fn = shard_fn.compile()
+        gather_fn = gather_fn.compile()  # type: ignore[assignment]
+        shard_fn = shard_fn.compile()  # type: ignore[assignment]
     return gather_fn, shard_fn
 
 
