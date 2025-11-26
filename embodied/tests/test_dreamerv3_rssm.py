@@ -212,7 +212,7 @@ class TestRSSMObserve:
         B, T = 2, 4
 
         # Create mock data
-        carry = dyn.initial(B)
+        enc_carry = {}
         obs_data = {
             "obs": np.random.randn(B, T, 4).astype(np.float32),
             "reward": np.random.randn(B, T).astype(np.float32),
@@ -221,21 +221,27 @@ class TestRSSMObserve:
         reset = np.zeros((B, T), dtype=bool)
         reset[:, 0] = True  # First timestep is reset
 
-        # Encode observations to tokens - wrap in pure() for initialization
-        @nj.pure
-        def encode_fn():
-            return enc(carry, obs_data, reset, training=False)
+        # Encode observations to tokens
+        enc_state = nj.init(enc)({}, enc_carry, obs_data, reset, training=False, seed=0)
+        enc_state, (_enc_carry, _entries, tokens) = nj.pure(enc)(
+            enc_state, enc_carry, obs_data, reset, training=False, seed=1
+        )
 
-        _, _, tokens = encode_fn()
-
-        # Observe with RSSM - wrap in pure()
-        @nj.pure
-        def observe_fn():
-            return dyn.observe(
-                carry, tokens, actions, reset, training=False, single=False
-            )
-
-        carry_new, entries, feat = observe_fn()
+        # Observe with RSSM
+        dyn_carry = dyn.initial(B)
+        dyn_state = nj.init(dyn.observe)(
+            {}, dyn_carry, tokens, actions, reset, training=False, single=False, seed=0
+        )
+        dyn_state, (carry_new, entries, _feat) = nj.pure(dyn.observe)(
+            dyn_state,
+            dyn_carry,
+            tokens,
+            actions,
+            reset,
+            training=False,
+            single=False,
+            seed=2,
+        )
 
         # Check outputs
         assert carry_new is not None
@@ -260,7 +266,7 @@ class TestRSSMObserve:
         B = 2
 
         # Create mock data for single timestep
-        carry = dyn.initial(B)
+        enc_carry = {}
         obs_data = {
             "obs": np.random.randn(B, 4).astype(np.float32),
             "reward": np.random.randn(B).astype(np.float32),
@@ -268,30 +274,29 @@ class TestRSSMObserve:
         actions = {"action": np.random.randint(0, 5, (B,)).astype(np.int32)}
         reset = np.zeros((B,), dtype=bool)
 
-        # For single timestep, we need tokens without time dimension
-        # Encode with batch only
-        obs_batch = {
-            "obs": obs_data["obs"][:, None, :],  # Add time dim
-            "reward": obs_data["reward"][:, None],
-        }
-        reset_batch = reset[:, None]
+        # Encode with single=True for single timestep (no time dimension)
+        enc_state = nj.init(enc)(
+            {}, enc_carry, obs_data, reset, training=False, single=True, seed=0
+        )
+        enc_state, (_enc_carry, _entries, tokens) = nj.pure(enc)(
+            enc_state, enc_carry, obs_data, reset, training=False, single=True, seed=1
+        )
 
-        @nj.pure
-        def encode_fn():
-            return enc(carry, obs_batch, reset_batch, training=False)
-
-        _, _, tokens = encode_fn()
-        # Extract single timestep
-        tokens_single = jax.tree.map(lambda x: x[:, 0], tokens)
-
-        # Observe with single=True - wrap in pure()
-        @nj.pure
-        def observe_single_fn():
-            return dyn.observe(
-                carry, tokens_single, actions, reset, training=False, single=True
-            )
-
-        carry_new, entry, feat = observe_single_fn()
+        # Observe with single=True
+        dyn_carry = dyn.initial(B)
+        dyn_state = nj.init(dyn.observe)(
+            {}, dyn_carry, tokens, actions, reset, training=False, single=True, seed=0
+        )
+        dyn_state, (carry_new, entry, _feat) = nj.pure(dyn.observe)(
+            dyn_state,
+            dyn_carry,
+            tokens,
+            actions,
+            reset,
+            training=False,
+            single=True,
+            seed=2,
+        )
 
         # Check outputs
         assert carry_new is not None
@@ -321,12 +326,11 @@ class TestRSSMImagine:
         # Create actions
         actions = {"action": np.random.randint(0, 5, (B, T)).astype(np.int32)}
 
-        # Imagine forward - need to specify length, wrap in pure()
-        @nj.pure
-        def imagine_fn():
-            return dyn.imagine(carry, actions, T, training=False)
-
-        entries = imagine_fn()
+        # Imagine forward
+        dyn_state = nj.init(dyn.imagine)({}, carry, actions, T, training=False, seed=0)
+        dyn_state, entries = nj.pure(dyn.imagine)(
+            dyn_state, carry, actions, T, training=False, seed=1
+        )
 
         # Check outputs
         assert "deter" in entries
@@ -344,9 +348,6 @@ class TestRSSMImagine:
 class TestEncoder:
     """Test Encoder component"""
 
-    @pytest.mark.skip(
-        reason="Requires complex ninjax state management - covered by agent tests"
-    )
     def test_encoder_vector_obs(self, obs_space_vector, config):
         """Test Encoder with vector observations"""
         jax.config.update("jax_transfer_guard", "allow")
@@ -361,12 +362,11 @@ class TestEncoder:
         }
         reset = np.zeros((B, T), dtype=bool)
 
-        # Wrap in pure() for initialization
-        @nj.pure
-        def encode_fn():
-            return enc(carry, obs, reset, training=False)
-
-        carry_new, entries, tokens = encode_fn()
+        # Encode observations
+        enc_state = nj.init(enc)({}, carry, obs, reset, training=False, seed=0)
+        enc_state, (_carry_new, _entries, tokens) = nj.pure(enc)(
+            enc_state, carry, obs, reset, training=False
+        )
 
         # Check outputs
         assert tokens is not None
@@ -376,9 +376,6 @@ class TestEncoder:
 class TestDecoder:
     """Test Decoder component"""
 
-    @pytest.mark.skip(
-        reason="Requires complex ninjax state management - covered by agent tests"
-    )
     def test_decoder_vector_obs(self, obs_space_vector, act_space_discrete, config):
         """Test Decoder with vector observations"""
         jax.config.update("jax_transfer_guard", "allow")
@@ -389,23 +386,22 @@ class TestDecoder:
         B = 2
 
         # Create features from RSSM
-        carry = dyn.initial(B)
+        dec_carry = {}  # Decoder doesn't use carry
+        dyn_carry = dyn.initial(B)
         feat = {
-            "deter": carry["deter"],
-            "stoch": carry["stoch"],
+            "deter": dyn_carry["deter"],
+            "stoch": dyn_carry["stoch"],
             "logit": jnp.zeros(
                 (B, config.agent.dyn.rssm.stoch, config.agent.dyn.rssm.classes)
             ),
         }
 
-        # Decode - needs reset parameter, wrap in pure()
+        # Decode
         reset = np.zeros((B,), dtype=bool)
-
-        @nj.pure
-        def decode_fn():
-            return dec(carry, feat, reset, training=False)
-
-        carry_new, entries, recons = decode_fn()
+        dec_state = nj.init(dec)({}, dec_carry, feat, reset, training=False, seed=0)
+        dec_state, (_carry_new, _entries, recons) = nj.pure(dec)(
+            dec_state, dec_carry, feat, reset, training=False
+        )
 
         # Check reconstructions
         assert "obs" in recons

@@ -220,7 +220,7 @@ class TestOptimizerIntegration:
         initial_params = state["train/model/linear/kernel"].copy()
 
         # Run training step
-        state, metrics = nj.pure(trainer)(state, x, target)
+        state, _metrics = nj.pure(trainer)(state, x, target)
         updated_params = state["train/model/linear/kernel"]
 
         # Parameters should have changed

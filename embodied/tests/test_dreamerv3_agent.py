@@ -287,7 +287,7 @@ class TestAgentTrain:
         }
         data["is_first"][:, 0] = True
 
-        carry_new, outs, metrics = ag.train(carry, data)
+        carry_new, _outs, metrics = ag.train(carry, data)
 
         # Check that training executed successfully
         assert carry_new is not None
@@ -319,7 +319,7 @@ class TestAgentTrain:
         }
         data["is_first"][:, 0] = True
 
-        carry_new, outs, metrics = ag.train(carry, data)
+        carry_new, _outs, metrics = ag.train(carry, data)
 
         # Check that training executed successfully
         assert carry_new is not None
@@ -348,7 +348,7 @@ class TestAgentTrain:
         }
         data["is_first"][:, 0] = True
 
-        carry_new, outs, metrics = ag.train(carry, data)
+        carry_new, _outs, _metrics = ag.train(carry, data)
 
         # Carry should be updated
         assert carry_new is not None
@@ -378,7 +378,7 @@ class TestAgentTrain:
         }
         data["is_first"][:, 0] = True
 
-        carry_new, outs, metrics = ag.train(carry, data)
+        carry_new, _outs, metrics = ag.train(carry, data)
 
         # Check that training executed successfully
         assert carry_new is not None

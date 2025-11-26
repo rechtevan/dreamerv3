@@ -91,7 +91,7 @@ class TestResolveRules:
         # Match all 'weight' parameters
         partition_rules = [(".*/weight", P("d")), (".*", P())]
 
-        sharding, grouping = transform.resolve_rules(params, partition_rules, mesh)
+        _sharding, grouping = transform.resolve_rules(params, partition_rules, mesh)
 
         assert len(grouping[".*/weight"]) == 2
         assert "layer1/dense/weight" in grouping[".*/weight"]

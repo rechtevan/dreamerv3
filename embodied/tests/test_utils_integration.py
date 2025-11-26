@@ -58,7 +58,7 @@ class TestNormalizeIntegration:
 
         # Second update with different data
         x2 = jnp.array([4.0, 5.0, 6.0], jnp.float32)
-        state, (mean2, std2) = nj.pure(model)(state, x2)
+        state, (mean2, _std2) = nj.pure(model)(state, x2)
 
         # Mean and std should change with new data
         assert not jnp.allclose(mean1, mean2)
@@ -151,7 +151,7 @@ class TestNormalizeIntegration:
         # Corr variable should not exist when debias=False
         assert "model/norm/corr/value" not in state
 
-        state, (mean, std) = nj.pure(model)(state, x)
+        state, (mean, _std) = nj.pure(model)(state, x)
         assert jnp.isfinite(mean)
 
     def test_normalize_limit_parameter(self):
@@ -168,7 +168,7 @@ class TestNormalizeIntegration:
         x = jnp.ones(10, jnp.float32)
 
         state = nj.init(model)({}, x, seed=0)
-        state, (mean, std) = nj.pure(model)(state, x)
+        state, (_mean, std) = nj.pure(model)(state, x)
 
         # Std should be at least the limit
         assert std >= 1.0
@@ -210,7 +210,7 @@ class TestNormalizeIntegration:
 
         means = []
         for x in data:
-            state, (mean, std) = nj.pure(model)(state, x)
+            state, (mean, _std) = nj.pure(model)(state, x)
             means.append(float(mean))
 
         # Mean should generally increase as we feed higher values
@@ -287,7 +287,7 @@ class TestSlowModelIntegration:
         x = jnp.ones((4, 16), nets.COMPUTE_DTYPE)
 
         state = nj.init(setup)({}, x, seed=0)
-        state, (out1, out2) = nj.pure(setup)(state, x)
+        state, (_out1, _out2) = nj.pure(setup)(state, x)
 
         # Both models should exist
         assert "setup/model/linear/kernel" in state
@@ -472,7 +472,7 @@ class TestSlowModelIntegration:
         x = jnp.ones((4, 16), nets.COMPUTE_DTYPE)
 
         state = nj.init(setup)({}, x, seed=0)
-        state, (out1, out2) = nj.pure(setup)(state, x)
+        state, (_out1, _out2) = nj.pure(setup)(state, x)
 
         # All layers should be copied
         assert "setup/model/linear1/kernel" in state

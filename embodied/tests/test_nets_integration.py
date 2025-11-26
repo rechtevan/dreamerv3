@@ -72,7 +72,7 @@ class TestLinearIntegration:
         model = Model(name="model")
         x = jnp.ones((4, 64), dtype=nets.COMPUTE_DTYPE)
         state = nj.init(model)({}, x, seed=0)
-        state, y = nj.pure(model)(state, x)
+        state, _y = nj.pure(model)(state, x)
 
         assert "model/linear/kernel" in state
         assert "model/linear/bias" not in state
@@ -325,7 +325,7 @@ class TestNormIntegration:
         model = Model(name="model")
         x = jnp.ones((2, 64), dtype=nets.COMPUTE_DTYPE)
         state = nj.init(model)({}, x, seed=0)
-        state, y = nj.pure(model)(state, x)
+        state, _y = nj.pure(model)(state, x)
 
         # No learnable parameters
         assert "model/norm/scale" not in state
@@ -778,7 +778,7 @@ class TestGRUIntegration:
         resets = jnp.array([[False, False, True, False], [False, False, False, False]])
 
         state = nj.init(model)({}, carry, inputs, resets, seed=0)
-        state, (new_carry, outputs) = nj.pure(model)(state, carry, inputs, resets)
+        state, (_new_carry, outputs) = nj.pure(model)(state, carry, inputs, resets)
 
         assert outputs.shape == (B, T, 64)
 

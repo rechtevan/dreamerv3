@@ -66,7 +66,7 @@ class TestClipByAGC:
         updates = {"weight": jnp.ones((10, 10)) * 10.0}
         state = transform.init(params)
 
-        new_updates, new_state = transform.update(updates, state, params)
+        new_updates, _new_state = transform.update(updates, state, params)
 
         # Gradients should be scaled down
         update_norm = jnp.linalg.norm(new_updates["weight"].flatten(), 2)
@@ -83,7 +83,7 @@ class TestClipByAGC:
         updates = {"weight": jnp.ones((10, 10)) * 0.01}
         state = transform.init(params)
 
-        new_updates, new_state = transform.update(updates, state, params)
+        new_updates, _new_state = transform.update(updates, state, params)
 
         # Gradients should be approximately unchanged
         assert jnp.allclose(new_updates["weight"], updates["weight"], atol=1e-6)
@@ -101,7 +101,7 @@ class TestClipByAGC:
         }
         state = transform.init(params)
 
-        new_updates, new_state = transform.update(updates, state, params)
+        new_updates, _new_state = transform.update(updates, state, params)
 
         # Should work without errors and return proper structure
         assert "layer1" in new_updates
@@ -143,7 +143,7 @@ class TestScaleByRMS:
         updates = {"weight": jnp.ones((5, 5)) * 0.1}
         state = transform.init(params)
 
-        new_updates, new_state = transform.update(updates, state, params)
+        _new_updates, new_state = transform.update(updates, state, params)
 
         step, nu = new_state
         assert step == 1
@@ -177,7 +177,7 @@ class TestScaleByRMS:
         updates = jax.tree.map(lambda x: x * 0.1, params)
         state = transform.init(params)
 
-        new_updates, new_state = transform.update(updates, state, params)
+        new_updates, _new_state = transform.update(updates, state, params)
 
         # Should preserve structure
         assert "encoder" in new_updates
@@ -218,7 +218,7 @@ class TestScaleByMomentum:
         updates = {"weight": jnp.ones((5, 5)) * 0.5}
         state = transform.init(params)
 
-        new_updates, new_state = transform.update(updates, state, params)
+        _new_updates, new_state = transform.update(updates, state, params)
 
         step, mu = new_state
         assert step == 1
@@ -234,7 +234,7 @@ class TestScaleByMomentum:
 
         # Do several updates to see momentum build up
         for i in range(5):
-            new_updates, state = transform.update(updates, state, params)
+            _new_updates, state = transform.update(updates, state, params)
 
         step, mu = state
         # After 5 steps with consistent gradients, momentum should be non-zero
@@ -252,7 +252,7 @@ class TestScaleByMomentum:
 
         # Should work without errors
         assert new_updates["weight"].shape == (5, 5)
-        step, mu = new_state
+        step, _mu = new_state
         assert step == 1
 
     def test_scale_by_momentum_with_pytree(self):
@@ -265,7 +265,7 @@ class TestScaleByMomentum:
         updates = jax.tree.map(lambda x: x * 0.1, params)
         state = transform.init(params)
 
-        new_updates, new_state = transform.update(updates, state, params)
+        new_updates, _new_state = transform.update(updates, state, params)
 
         # Should preserve structure
         assert "layer1" in new_updates

@@ -473,7 +473,7 @@ class TestHeadOutputProperties:
         model = Model(name="model")
         x = jnp.ones((4, 16), nets.COMPUTE_DTYPE)
         state = nj.init(model)({}, x, seed=0)
-        state, (out, entropy) = nj.pure(model)(state, x)
+        state, (out, _entropy) = nj.pure(model)(state, x)
 
         # Entropy should be between minent and maxent
         assert hasattr(out, "minent")
@@ -504,7 +504,7 @@ class TestHeadOutputProperties:
         model = Model(name="model")
         x = jnp.ones((4, 16), nets.COMPUTE_DTYPE)
         state = nj.init(model)({}, x, seed=0)
-        state, (out, entropy) = nj.pure(model)(state, x)
+        state, (out, _entropy) = nj.pure(model)(state, x)
 
         # Check minent/maxent attributes exist
         assert hasattr(out, "minent")

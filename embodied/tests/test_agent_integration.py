@@ -396,7 +396,7 @@ class TestAgentPolicy:
                 "is_first": np.array([i == 0]),
             }
 
-            carry, acts, outs = agent_instance.policy(carry, obs, mode="train")
+            carry, acts, _outs = agent_instance.policy(carry, obs, mode="train")
 
             assert acts["action"].shape == (1, 2)
             assert np.isfinite(acts["action"]).all()

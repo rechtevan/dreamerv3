@@ -562,7 +562,7 @@ class TestRSSMIntegration:
     @pytest.mark.skip(reason="Integration test - tested in test_agent.py")
     def test_agent_has_rssm(self, minimal_setup):
         """Test agent contains RSSM (dyn) module"""
-        agent, obs_space, act_space, config = minimal_setup
+        agent, _obs_space, _act_space, _config = minimal_setup
 
         # Access the inner model
         model = agent.model
@@ -572,7 +572,7 @@ class TestRSSMIntegration:
     @pytest.mark.skip(reason="Integration test - tested in test_agent.py")
     def test_agent_has_encoder(self, minimal_setup):
         """Test agent contains Encoder module"""
-        agent, obs_space, act_space, config = minimal_setup
+        agent, _obs_space, _act_space, _config = minimal_setup
 
         model = agent.model
         assert hasattr(model, "enc")
@@ -581,7 +581,7 @@ class TestRSSMIntegration:
     @pytest.mark.skip(reason="Integration test - tested in test_agent.py")
     def test_agent_has_decoder(self, minimal_setup):
         """Test agent contains Decoder module"""
-        agent, obs_space, act_space, config = minimal_setup
+        agent, _obs_space, _act_space, _config = minimal_setup
 
         model = agent.model
         assert hasattr(model, "dec")
@@ -590,7 +590,7 @@ class TestRSSMIntegration:
     @pytest.mark.skip(reason="Integration test - tested in test_agent.py")
     def test_rssm_entry_space_integration(self, minimal_setup):
         """Test RSSM entry space matches configuration"""
-        agent, obs_space, act_space, config = minimal_setup
+        agent, _obs_space, _act_space, config = minimal_setup
 
         model = agent.model
         entry_space = model.dyn.entry_space
@@ -606,7 +606,7 @@ class TestRSSMIntegration:
     @pytest.mark.skip(reason="Integration test - tested in test_agent.py")
     def test_rssm_initial_state_integration(self, minimal_setup):
         """Test RSSM initial state generation through agent"""
-        agent, obs_space, act_space, config = minimal_setup
+        agent, _obs_space, _act_space, _config = minimal_setup
 
         batch_size = 2
         carry = agent.init_policy(batch_size)
