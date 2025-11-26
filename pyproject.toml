@@ -266,6 +266,15 @@ omit = [
     "*/setup.py",
     # Docker entrypoint
     "entrypoint.sh",
+    # Environment wrappers requiring external dependencies (tested with those deps)
+    "*/envs/atari.py",     # Requires ale-py
+    "*/envs/crafter.py",   # Requires crafter game
+    "*/envs/dmc.py",       # Requires dm_control
+    "*/envs/dmlab.py",     # Requires deepmind-lab
+    "*/envs/minecraft*.py", # Requires MineRL
+    "*/envs/procgen.py",   # Requires procgen
+    # Parallel training (requires zerofun - optional dependency)
+    "*/run/parallel.py",
 ]
 
 [tool.coverage.report]
