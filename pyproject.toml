@@ -242,8 +242,11 @@ filterwarnings = [
 ]
 
 # Coverage configuration
+# NOTE: Do NOT use 'source' in [tool.coverage.run] - it causes JAX import issues.
+# Instead, use 'include' in [tool.coverage.report] to filter the report output.
 [tool.coverage.run]
-source = ["dreamerv3", "embodied"]
+branch = true
+parallel = true
 omit = [
     # Test files
     "*/tests/*",
@@ -266,6 +269,11 @@ omit = [
 ]
 
 [tool.coverage.report]
+# Filter to only show dreamerv3 and embodied packages
+include = [
+    "dreamerv3/*",
+    "embodied/*",
+]
 precision = 2
 show_missing = true
 skip_empty = true
