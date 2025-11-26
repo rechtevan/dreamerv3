@@ -1,3 +1,24 @@
+"""Environment driver for parallel and sequential episode collection.
+
+This module provides the Driver class for collecting experience from multiple
+environment instances. It supports both parallel (multiprocess) and sequential
+execution modes, making it easy to scale data collection.
+
+The Driver manages:
+- Environment instantiation and lifecycle
+- Batched action execution across environments
+- Episode boundary detection and handling
+- Callback execution for each transition
+
+Example:
+    >>> def make_env():
+    ...     return MyEnvironment()
+    >>> driver = Driver([make_env] * 4, parallel=True)
+    >>> driver.on_step(lambda trn, i: replay.add(trn))
+    >>> driver(policy, steps=10000)
+    >>> driver.close()
+"""
+
 import time
 import typing
 
@@ -8,7 +29,42 @@ import portal
 
 
 class Driver:
+    """Collects experience from multiple environments using a policy.
+
+    The Driver executes a policy across multiple environment instances,
+    collecting transitions and triggering callbacks. It supports both
+    parallel (multiprocess) and sequential execution modes.
+
+    In parallel mode, environments run in separate processes communicating
+    via pipes, enabling true parallelism on multi-core systems. In sequential
+    mode, environments run in the main process, useful for debugging.
+
+    Attributes:
+        parallel: Whether running in parallel mode.
+        length: Number of environment instances.
+        act_space: Action space (dict of Space objects).
+        callbacks: List of callback functions called on each step.
+        carry: Current policy carry state.
+        acts: Current actions to execute.
+
+    Example:
+        >>> driver = Driver([make_env] * 4, parallel=True)
+        >>> driver.on_step(lambda trn, i: print(f"Env {i}: {trn['reward']}"))
+        >>> driver(my_policy, episodes=100)
+        >>> driver.close()
+    """
+
     def __init__(self, make_env_fns, parallel=True, **kwargs):
+        """Initialize the Driver with environment factory functions.
+
+        Args:
+            make_env_fns: List of callables that create environment instances.
+                Each callable should return an environment with obs_space,
+                act_space attributes and step(action) method.
+            parallel: If True, run environments in separate processes.
+                If False, run sequentially in the main process.
+            **kwargs: Additional keyword arguments passed to policy and callbacks.
+        """
         assert len(make_env_fns) >= 1
         self.parallel = parallel
         self.kwargs = kwargs
@@ -35,6 +91,15 @@ class Driver:
         self.reset()
 
     def reset(self, init_policy=None):
+        """Reset the driver state for a new collection run.
+
+        Initializes actions to zeros (with reset=True) and optionally
+        initializes the policy carry state.
+
+        Args:
+            init_policy: Optional callable that takes batch size and returns
+                initial policy carry state. If None, carry is set to None.
+        """
         self.acts = {
             k: np.zeros((self.length,) + v.shape, v.dtype)
             for k, v in self.act_space.items()
@@ -43,15 +108,37 @@ class Driver:
         self.carry = init_policy and init_policy(self.length)
 
     def close(self):
+        """Close all environments and terminate worker processes.
+
+        In parallel mode, kills all worker processes. In sequential mode,
+        calls close() on each environment instance.
+        """
         if self.parallel:
             [proc.kill() for proc in self.procs]
         else:
             [env.close() for env in self.envs]
 
     def on_step(self, callback):
+        """Register a callback to be called after each environment step.
+
+        Args:
+            callback: Function called as callback(transition, env_index, **kwargs)
+                where transition is a dict containing obs, actions, and outputs.
+        """
         self.callbacks.append(callback)
 
     def __call__(self, policy, steps=0, episodes=0):
+        """Run the policy for a specified number of steps or episodes.
+
+        Collects experience by repeatedly stepping all environments with
+        the policy until either the step or episode target is reached.
+
+        Args:
+            policy: Callable that takes (carry, obs, **kwargs) and returns
+                (new_carry, actions, outputs). Actions and outputs are dicts.
+            steps: Minimum number of environment steps to collect.
+            episodes: Minimum number of complete episodes to collect.
+        """
         step, episode = 0, 0
         while step < steps or episode < episodes:
             step, episode = self._step(policy, step, episode)

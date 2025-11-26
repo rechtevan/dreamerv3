@@ -1,3 +1,23 @@
+"""Experience replay buffer for reinforcement learning.
+
+This module provides the Replay class for storing and sampling experience
+sequences. It supports both in-memory and disk-backed storage with
+configurable sampling strategies.
+
+Key features:
+- Chunked storage for efficient memory usage
+- Multiple sampling strategies via selectors (Uniform, Prioritized, etc.)
+- Online queue mode for prioritizing recent experience
+- Asynchronous disk persistence
+- Thread-safe operations
+
+Example:
+    >>> replay = Replay(length=64, capacity=100000, directory="/tmp/replay")
+    >>> replay.add({"obs": obs, "action": action, "reward": reward}, worker=0)
+    >>> batch = replay.sample(batch=32)
+    >>> replay.save()  # Persist to disk
+"""
+
 import threading
 import typing
 from collections import defaultdict, deque
@@ -12,6 +32,33 @@ from . import limiters, selectors
 
 
 class Replay:
+    """Experience replay buffer with chunked storage and flexible sampling.
+
+    Stores experience sequences and provides efficient sampling for training.
+    Supports various sampling strategies, prioritized replay, and disk persistence.
+
+    Experiences are stored in chunks and organized into fixed-length sequences.
+    The buffer maintains multiple streams (one per worker) to handle parallel
+    data collection without interleaving sequences from different episodes.
+
+    Attributes:
+        length: Fixed length of sampled sequences.
+        capacity: Maximum number of items (sequences) in the buffer.
+        chunksize: Number of steps per storage chunk.
+        name: Identifier for logging and metrics.
+        sampler: Selector instance for choosing items to sample.
+        online: Whether to prioritize recent experience in a queue.
+        directory: Path for disk persistence (None for memory-only).
+        metrics: Dict tracking samples, inserts, and updates.
+
+    Example:
+        >>> replay = Replay(length=64, capacity=100000)
+        >>> for step in episode:
+        ...     replay.add(step, worker=0)
+        >>> for batch in replay.dataset(batch=32):
+        ...     train(batch)
+    """
+
     def __init__(
         self,
         length,
@@ -24,6 +71,19 @@ class Replay:
         name="unnamed",
         seed=0,
     ):
+        """Initialize the replay buffer.
+
+        Args:
+            length: Length of sequences to sample (number of timesteps).
+            capacity: Maximum number of items. None for unlimited.
+            directory: Path for disk persistence. None for memory-only.
+            chunksize: Number of timesteps per storage chunk.
+            online: If True, maintain a queue of recent experience.
+            selector: Sampling strategy (default: Uniform). Can be Prioritized, etc.
+            save_wait: If True, block on save() until writes complete.
+            name: Identifier for logging and error messages.
+            seed: Random seed for the selector.
+        """
         self.length = length
         self.capacity = capacity
         self.chunksize = chunksize
@@ -60,9 +120,16 @@ class Replay:
         self.metrics = {"samples": 0, "inserts": 0, "updates": 0}
 
     def __len__(self):
+        """Return the number of items (sequences) currently in the buffer."""
         return len(self.items)
 
     def stats(self):
+        """Compute and return buffer statistics, resetting metrics.
+
+        Returns:
+            Dict with keys: items, chunks, streams, ram_gb, inserts, samples,
+            updates, replay_ratio. Metrics are reset to zero after calling.
+        """
         ratio = lambda x, y: x / y if y else np.nan
         m = self.metrics
         chunk_nbytes = sum(x.nbytes for x in list(self.chunks.values()))
@@ -82,6 +149,17 @@ class Replay:
 
     @elements.timer.section("replay_add")
     def add(self, step, worker=0):
+        """Add a single timestep to the buffer.
+
+        Accumulates steps into sequences of self.length. Once enough steps
+        are accumulated, the sequence becomes available for sampling.
+
+        Args:
+            step: Dict of arrays for this timestep (obs, action, reward, etc.).
+                Keys starting with "log/" are filtered out.
+            worker: Worker ID for multi-worker collection. Each worker maintains
+                a separate stream to avoid interleaving episodes.
+        """
         step = {k: v for k, v in step.items() if not k.startswith("log/")}
         with self.rwlock.reading:
             step = {k: np.asarray(v) for k, v in step.items()}
@@ -127,6 +205,15 @@ class Replay:
 
     @elements.timer.section("replay_sample")
     def sample(self, batch, mode="train"):
+        """Sample a batch of sequences from the buffer.
+
+        Args:
+            batch: Number of sequences to sample.
+            mode: One of "train", "report", or "eval". Affects metrics tracking.
+
+        Returns:
+            Dict of batched arrays with shape [batch, length, ...].
+        """
         message = f"Replay buffer {self.name} is empty"
         limiters.wait(lambda: len(self.sampler), message)
         seqs, is_online = zip(*[self._sample(mode) for _ in range(batch)])
@@ -136,6 +223,17 @@ class Replay:
 
     @elements.timer.section("replay_update")
     def update(self, data):
+        """Update stored sequences with new data (e.g., computed values).
+
+        Used to write back computed values like priorities or value targets
+        to the replay buffer. Also updates sampling priorities if the selector
+        supports prioritized replay.
+
+        Args:
+            data: Dict containing "stepid" for identifying sequences,
+                optional "priority" for updating sampling weights,
+                and any additional data to store back in the buffer.
+        """
         stepid = data.pop("stepid")
         priority = data.pop("priority", None)
         assert stepid.ndim == 3, stepid.shape
@@ -244,6 +342,21 @@ class Replay:
                     remaining -= used
 
     def dataset(self, batch, length=None, consec=None, prefix=0, report=False):
+        """Generate an infinite stream of batched data.
+
+        Yields batches continuously, splitting long sequences into consecutive
+        chunks if consec > 1. Useful for training loops that need streaming data.
+
+        Args:
+            batch: Number of sequences per batch.
+            length: Length of each yielded chunk (default: self.length).
+            consec: Number of consecutive chunks per sampled sequence.
+            prefix: Additional timesteps at the start of each chunk.
+            report: If True, use "report" mode for sampling (no metrics).
+
+        Yields:
+            Dict of batched arrays with shape [batch, length+prefix, ...].
+        """
         length = length or self.length
         consec = consec or (self.length - prefix) // length
         assert consec <= (self.length - prefix) // length, (
@@ -307,6 +420,14 @@ class Replay:
 
     @elements.timer.section("replay_save")
     def save(self):
+        """Persist all unsaved chunks to disk.
+
+        Completes any in-progress chunks, then saves all chunks that haven't
+        been saved yet. Saving is asynchronous unless save_wait=True.
+
+        Returns:
+            None
+        """
         if self.directory:
             with self.rwlock.writing:
                 for worker, (chunkid, _) in self.current.items():
@@ -324,6 +445,16 @@ class Replay:
 
     @elements.timer.section("replay_load")
     def load(self, data=None, directory=None, amount=None):
+        """Load chunks from disk into memory.
+
+        Loads previously saved chunks from the specified directory, up to
+        the specified amount. Handles corrupted chunks gracefully.
+
+        Args:
+            data: Unused, kept for API compatibility.
+            directory: Path to load from (default: self.directory).
+            amount: Maximum number of items to load (default: self.capacity).
+        """
         directory = directory or self.directory
         amount = amount or self.capacity or np.inf
         if not directory:
