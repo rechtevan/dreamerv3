@@ -42,6 +42,7 @@ class TestParallel:
             bind(self._make_replay, args),
             self._make_env,
             self._make_env,
+            self._make_stream,
             self._make_logger,
             args,
         )
@@ -64,6 +65,7 @@ class TestParallel:
             bind(self._make_replay, args),
             self._make_env,
             self._make_env,
+            self._make_stream,
             self._make_logger,
             args,
         )
@@ -84,6 +86,10 @@ class TestParallel:
         if train_ratio:
             kwargs["samples_per_insert"] = train_ratio / args.batch_length
         return embodied.replay.Replay(**kwargs)
+
+    def _make_stream(self, replay, mode):
+        """Create a data stream from the replay buffer."""
+        return replay.dataset(batch=8)
 
     def _make_logger(self):
         return elements.Logger(
