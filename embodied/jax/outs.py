@@ -419,9 +419,9 @@ class Concat:
         his = self.midpoints + (None,)
         results = []
         for fn, lo, hi in zip(fns, los, his):
-            segment = [slice(None, None, None)] * (self.axis + 1)
-            segment[self.axis] = slice(lo, hi, None)
-            segment = tuple(segment)
+            segment_list = [slice(None, None, None)] * (self.axis + 1)
+            segment_list[self.axis] = slice(lo, hi, None)
+            segment = tuple(segment_list)
             a, kw = jax.tree.map(lambda x: x[segment], (args, kwargs))
             results.append(fn(*a, **kw))
         return jax.tree.map(lambda *xs: jnp.concatenate(xs, self.axis), *results)

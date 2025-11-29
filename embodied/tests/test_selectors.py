@@ -253,23 +253,23 @@ class TestRecency:
     """
 
     def test_empty_recency(self):
-        """Test Recency with no items - documents sampling bug."""
+        """Test Recency with no items - raises KeyError."""
         uprobs = np.linspace(1.0, 0.1, 100)
         recency = selectors.Recency(uprobs, seed=0)
         assert len(recency) == 0
-        # Bug: UnboundLocalError in _sample when path is empty
-        with pytest.raises(UnboundLocalError):
+        # Empty recency raises KeyError when trying to access non-existent item
+        with pytest.raises(KeyError):
             recency()
 
     def test_single_item(self):
-        """Test Recency with single item - documents sampling bug."""
+        """Test Recency with single item - samples correctly."""
         uprobs = np.linspace(1.0, 0.1, 100)
         recency = selectors.Recency(uprobs, seed=0)
         recency[1] = [b"step1"]
         assert len(recency) == 1
-        # Bug: UnboundLocalError in _sample
-        with pytest.raises(UnboundLocalError):
-            recency()
+        # Single item should be sampled correctly
+        key = recency()
+        assert key == 1
 
     def test_recency_initialization(self):
         """Test Recency initialization with valid uprobs."""

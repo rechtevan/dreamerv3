@@ -196,6 +196,6 @@ def print_grouping(grouping):
         print(f'Partition rule "{rule}" matches {len(ps)} param tensors')
         ks_list = ["/".join(p.split("/")[-2:]) for p in ps]
         ks_counter = Counter(ks_list)
-        ks = ks_counter.most_common(len(ks_counter))
-        ks = [f"- .../{k}: {v}" for k, v in ks]
-        print("\n".join(ks))
+        ks_counts = ks_counter.most_common(len(ks_counter))
+        ks_formatted = [f"- .../{k}: {v}" for k, v in ks_counts]
+        print("\n".join(ks_formatted))

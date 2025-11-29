@@ -336,9 +336,9 @@ def parallel_logger(make_logger, args):
 
     parallel = elements.Agg()
     epstats = elements.Agg()
-    episodes = collections.defaultdict(elements.Agg)
-    updated = collections.defaultdict(lambda: None)
-    dones = collections.defaultdict(lambda: True)
+    episodes: dict = collections.defaultdict(elements.Agg)
+    updated: dict[str, float | None] = collections.defaultdict(lambda: None)
+    dones: dict[str, bool] = collections.defaultdict(lambda: True)
 
     @elements.timer.section("addfn")
     def addfn(metrics):

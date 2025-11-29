@@ -149,9 +149,9 @@ class Normalize(nj.Module):
         Raises:
             NotImplementedError: If impl is not a supported strategy.
         """
-        corr = 1.0
+        corr: float | jax.Array = 1.0
         if self.debias and self.impl != "none":
-            corr /= jnp.maximum(self.rate, self.corr.read())
+            corr = corr / jnp.maximum(self.rate, self.corr.read())
         if self.impl == "none":
             return 0.0, 1.0
         elif self.impl == "meanstd":
