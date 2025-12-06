@@ -34,7 +34,7 @@ dependencies = [
     "jax[cuda12]==0.4.33",
     "jaxtyping",
     "ninjax>=3.5.1",
-    "numpy<2",
+    "numpy>=1.24",  # DMLab/MineRL may require numpy<2 if using those envs
     "nvidia-cuda-nvcc-cu12<=12.2",
     "optax",
     "portal>=3.5.0",
@@ -143,7 +143,6 @@ ignore = [
     "SIM108",  # Use ternary operator (sometimes less readable)
     "SIM117",  # Use single with statement (will fix in Issue #11)
     "SIM118",  # Use key in dict instead of key in dict.keys() (will fix in Issue #11)
-    "UP038",   # Use X | Y instead of (X, Y) in isinstance (requires Python 3.10+)
 ]
 
 fixable = ["ALL"]
