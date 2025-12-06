@@ -682,7 +682,9 @@ class SampleTree:
         """
         entry = self.entries.pop(key)
         entry_parent = entry.parent
+        assert self.last is not None, "Tree must have at least one entry"
         last_parent = self.last.parent
+        assert entry.parent is not None, "Entry must have a parent"
         entry.parent.remove(entry)
         if entry is not self.last:
             entry_parent.append(self.last)
@@ -730,7 +732,7 @@ class SampleTree:
         Raises:
             ValueError: If tree is empty (no entries to sample).
         """
-        node = self.root
+        node: SampleTreeNode | SampleTreeEntry = self.root
         while isinstance(node, SampleTreeNode):
             uprobs = np.array([x.uprob for x in node.children])
             total = uprobs.sum()
@@ -743,6 +745,7 @@ class SampleTree:
                 probs = uprobs / total
             choice = self.rng.choice(np.arange(len(uprobs)), p=probs)
             node = node.children[choice.item()]
+        assert isinstance(node, SampleTreeEntry)
         return node.key
 
 

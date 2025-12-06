@@ -53,17 +53,20 @@ class Chunk:
     def update(self, index, length, mapping):
         assert 0 <= index <= self.length, (index, self.length)
         assert 0 <= index + length <= self.length, (index, length, self.length)
+        assert self.data is not None, "Cannot update empty chunk"
         for key, value in mapping.items():
             self.data[key][index : index + length] = value
 
     def slice(self, index, length):
         assert index >= 0 and index + length <= self.length
+        assert self.data is not None, "Cannot slice empty chunk"
         return {k: v[index : index + length] for k, v in self.data.items()}
 
     @elements.timer.section("chunk_save")
     def save(self, directory, log=False):
         assert not self.saved
         self.saved = True
+        assert self.data is not None, "Cannot save empty chunk"
         filename = elements.Path(directory) / self.filename
         data = {k: v[: self.length] for k, v in self.data.items()}
         with io.BytesIO() as stream:

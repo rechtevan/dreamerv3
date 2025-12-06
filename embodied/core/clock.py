@@ -23,6 +23,7 @@ Typical usage:
 
 import threading
 import time
+import typing
 
 import portal
 
@@ -71,7 +72,7 @@ def _start_server(port, replicas):
         replicas: Total number of client replicas that will connect.
     """
     clocks: list[list[float]] = []
-    requests: list[float] = []
+    requests: list[typing.Any] = []
     result: list[int | None] = [None]
     receive = threading.Barrier(replicas)
     respond = threading.Barrier(replicas)
@@ -178,6 +179,7 @@ class GlobalClock:
         """
         self.multihost = bool(CLIENT)
         if self.multihost:
+            assert CLIENT is not None, "CLIENT must be initialized in multihost mode"
             self.clockid = CLIENT.create(REPLICA, every).result()
             self.skip_next = not first
         else:
@@ -199,6 +201,7 @@ class GlobalClock:
             False otherwise.
         """
         if self.multihost:
+            assert CLIENT is not None, "CLIENT must be initialized in multihost mode"
             if self.skip_next:
                 self.skip_next = False
                 skip = True
