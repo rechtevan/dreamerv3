@@ -1,3 +1,21 @@
+"""JAX transformation utilities for distributed model initialization and execution.
+
+This module provides utilities for transforming Ninjax models to work with JAX's
+distributed primitives (pmap, shard_map, jit). It handles:
+
+- Model initialization with parameter sharding across devices
+- Model application with activation sharding and partition rules
+- Layer-level sharding constraints via callback system
+- Multi-device and multi-host coordination
+
+The two main entry points are:
+- init(): Initialize model parameters with specified sharding
+- apply(): Execute model forward pass with input/output sharding
+
+These utilities enable efficient model parallelism and data parallelism for
+large-scale DreamerV3 training.
+"""
+
 import re
 import threading
 import typing
@@ -29,6 +47,53 @@ def init(
     dummy_inputs=(),
     print_partition=False,
 ):
+    """Initialize a Ninjax model with parameter sharding across devices.
+
+    Transforms a Ninjax function into an initialization function that creates
+    model parameters distributed across devices according to partition rules.
+    The initialization process:
+    1. Converts fn to a pure Ninjax function if needed
+    2. Evaluates parameter shapes using dummy inputs
+    3. Resolves partition rules to determine parameter sharding
+    4. JIT-compiles initialization with proper shardings
+    5. Executes to create sharded parameters on devices
+
+    Args:
+        fn: Ninjax module or function to initialize. If not already pure
+            (nj.pure), will be converted automatically.
+        mesh: JAX mesh defining device topology for sharding.
+        arg_shardings: Sharding specs for function arguments (params, seed, *args).
+        param_partition_rules: List of (regex_pattern, PartitionSpec) tuples
+            for parameter sharding. Patterns are matched against parameter paths
+            (e.g., ".*encoder.*" matches all encoder parameters).
+        act_partition_rules: List of (regex_pattern, PartitionSpec) tuples
+            for activation sharding during initialization (rarely needed).
+        static_argnums: Indices of arguments to treat as static (not traced).
+        dummy_inputs: Example inputs matching (params, seed, *args) for shape
+            inference. Used to determine parameter shapes before allocation.
+        print_partition: If True, print which parameters match which rules.
+
+    Returns:
+        Tuple of (params, params_sharding):
+            - params: Initialized parameter dict distributed across devices
+            - params_sharding: Dict mapping parameter names to their NamedSharding
+
+    Raises:
+        Exception: If any parameter doesn't match any partition rule.
+
+    Example:
+        >>> from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
+        >>> mesh = Mesh(jax.devices(), ('d',))
+        >>> param_rules = [
+        ...     ('.*encoder.*', P('d', None)),  # Shard encoder on data axis
+        ...     ('.*', P()),  # Replicate everything else
+        ... ]
+        >>> dummy = ({'seed': 0}, jax.random.PRNGKey(0), inputs)
+        >>> params, sharding = init(
+        ...     model_fn, mesh, arg_shardings, param_rules, dummy_inputs=dummy
+        ... )
+    """
+
     def init(fun, **jit_kwargs):
         if not getattr(fun, "_is_pure", False):
             fun = nj.pure(fun)
@@ -80,6 +145,69 @@ def apply(
     use_shardmap=False,
     first_outnums=(),
 ):
+    """Transform a Ninjax function for distributed execution with sharding.
+
+    Wraps a Ninjax function to execute across devices with specified input/output
+    sharding and activation partition rules. This is the main entry point for
+    running models in production after initialization.
+
+    The transformation:
+    1. Wraps fn to handle params/seed/args unpacking
+    2. Optionally uses shard_map for SPMD execution (advanced)
+    3. Applies layer callbacks for activation sharding constraints
+    4. JIT-compiles with input/output sharding specifications
+    5. Returns a compiled function ready for execution
+
+    Args:
+        fn: Ninjax function to transform. Should be a pure function or module.
+        mesh: JAX mesh defining device topology.
+        in_shardings: Sharding specs for inputs. If donate_params=True, expects
+            (donated_params, allocated_params, seed, *args), otherwise
+            (params, seed, *args).
+        out_shardings: Sharding specs for outputs. Can be single sharding or
+            list of shardings for multiple outputs.
+        partition_rules: List of (regex_pattern, PartitionSpec) tuples for
+            activation sharding. Patterns match layer names (e.g., ".*attn.*").
+        static_argnums: Indices of arguments to treat as static.
+        single_output: If True, fn returns single value instead of tuple.
+            The wrapper will unpack the single-element tuple.
+        return_params: If True, return (params, *outputs) instead of just outputs.
+            Useful for updating params during training.
+        donate_params: If True, first input is donated params that can be
+            mutated in-place. Enables memory-efficient parameter updates.
+        split_rng: If True and use_shardmap=True, fold process index into RNG
+            to ensure different randomness across devices.
+        use_shardmap: If True, use jax.experimental.shard_map for SPMD execution.
+            Enables more aggressive compiler optimizations but more complex.
+        first_outnums: Indices of outputs to add leading singleton dimension
+            when using shard_map. Used for reduction outputs.
+
+    Returns:
+        JIT-compiled function with signature matching fn but operating on
+        sharded inputs/outputs.
+
+    Example:
+        >>> # Basic usage
+        >>> apply_fn = apply(
+        ...     model.forward,
+        ...     mesh,
+        ...     in_shardings=[params_sharding, seed_sharding, data_sharding],
+        ...     out_shardings=output_sharding,
+        ...     partition_rules=[('.*', P())],
+        ... )
+        >>> outputs = apply_fn(params, seed, inputs)
+        >>>
+        >>> # With parameter donation for memory efficiency
+        >>> train_fn = apply(
+        ...     agent.train,
+        ...     mesh,
+        ...     in_shardings=[donated_sharding, allocated_sharding, ...],
+        ...     out_shardings=[params_sharding, loss_sharding],
+        ...     donate_params=True,
+        ...     return_params=True,
+        ... )
+        >>> new_params, loss = train_fn(old_params, static_params, seed, batch)
+    """
     if single_output:
         assert len(out_shardings) == 1
 
@@ -146,6 +274,39 @@ def apply(
 
 
 def create_layer_callback(mesh, partition_rules):
+    """Create a layer callback function for activation sharding.
+
+    The callback is invoked by network layers (via nets.LAYER_CALLBACK) to
+    apply sharding constraints to intermediate activations. It matches layer
+    names against partition rules and applies the corresponding sharding.
+
+    The callback also stores sharding information in TRACER_SHARDINGS to enable
+    shard_map to access sharding of traced values (workaround for JAX limitation).
+
+    Args:
+        mesh: JAX mesh for creating NamedSharding objects.
+        partition_rules: List of (regex_pattern, PartitionSpec) tuples.
+            Patterns are matched against full layer paths.
+
+    Returns:
+        Callback function with signature (y, name) -> y_sharded where:
+            - y: Activation tensor or tree to apply sharding to
+            - name: Layer name (combined with current Ninjax scope)
+            - y_sharded: Same structure as y but with sharding constraints
+
+    Raises:
+        Exception: If layer name doesn't match any partition rule.
+
+    Example:
+        >>> rules = [
+        ...     ('.*encoder.*', P('d', None)),  # Shard encoder activations
+        ...     ('.*', P()),  # Replicate all other activations
+        ... ]
+        >>> callback = create_layer_callback(mesh, rules)
+        >>> # Callback is set globally and invoked by layer implementations
+        >>> nets.LAYER_CALLBACK = callback
+    """
+
     def layer_callback(y, name):
         name = f"{nj.ninjax.SCOPE}/{name}"
         for rule, spec in partition_rules:
@@ -169,6 +330,38 @@ def create_layer_callback(mesh, partition_rules):
 
 
 def resolve_rules(params, partition_rules, mesh):
+    """Resolve partition rules to concrete sharding specifications.
+
+    Matches each parameter name against partition rules (regex patterns) and
+    assigns corresponding PartitionSpecs. Groups parameters by which rule
+    they matched for reporting/debugging.
+
+    Args:
+        params: Dict of parameter names to shape/dtype structs or arrays.
+        partition_rules: List of (regex_pattern, PartitionSpec) tuples.
+            If empty, defaults to [(".*", P())] (replicate all).
+        mesh: JAX mesh for creating NamedSharding objects.
+
+    Returns:
+        Tuple of (sharding, grouping):
+            - sharding: Dict mapping param names to NamedSharding objects
+            - grouping: Dict mapping rule patterns to list of matched param names
+
+    Raises:
+        Exception: If any parameter doesn't match any rule.
+        AssertionError: If not all parameters were assigned a sharding.
+
+    Example:
+        >>> params = {'encoder/w': ..., 'decoder/w': ..., 'bias': ...}
+        >>> rules = [
+        ...     ('.*encoder.*', P('d', None)),
+        ...     ('.*decoder.*', P(None, 'd')),
+        ...     ('.*', P()),
+        ... ]
+        >>> sharding, grouping = resolve_rules(params, rules, mesh)
+        >>> # sharding['encoder/w'] = NamedSharding(mesh, P('d', None))
+        >>> # grouping['.*encoder.*'] = ['encoder/w']
+    """
     if len(partition_rules) == 0:
         partition_rules = [(".*", P())]
     params_spec, grouping = dict(), dict()  # type: ignore[var-annotated]
@@ -190,6 +383,26 @@ def resolve_rules(params, partition_rules, mesh):
 
 
 def print_grouping(grouping):
+    """Print a summary of how partition rules matched parameters.
+
+    Displays which parameters matched each rule and how many times each
+    parameter name pattern appeared. This is useful for debugging partition
+    rules and understanding how parameters are distributed.
+
+    Args:
+        grouping: Dict mapping rule patterns to lists of matched parameter names.
+            Typically obtained from resolve_rules().
+
+    Example:
+        >>> print_grouping(grouping)
+        Partition rule ".*encoder.*" matches 42 param tensors
+        - .../linear/kernel: 20
+        - .../linear/bias: 20
+        - .../norm/scale: 2
+        Partition rule ".*" matches 8 param tensors
+        - .../output/kernel: 4
+        - .../output/bias: 4
+    """
     for rule, ps in grouping.items():
         if len(ps) == 0:
             continue
