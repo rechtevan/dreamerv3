@@ -22,7 +22,7 @@ Example:
 import time
 import typing
 
-import cloudpickle  # type: ignore
+import cloudpickle
 import elements
 import numpy as np
 import portal
@@ -144,16 +144,18 @@ class Driver:
             step, episode = self._step(policy, step, episode)
 
     def _step(self, policy, step, episode):
-        acts = self.acts
-        assert acts is not None  # Always set by reset()
-        assert all(len(x) == self.length for x in acts.values())
-        assert all(isinstance(v, np.ndarray) for v in acts.values())
-        acts = [{k: v[i] for k, v in acts.items()} for i in range(self.length)]
+        acts_dict = self.acts
+        assert acts_dict is not None  # Always set by reset()
+        assert all(len(x) == self.length for x in acts_dict.values())
+        assert all(isinstance(v, np.ndarray) for v in acts_dict.values())
+        acts_list = [
+            {k: v[i] for k, v in acts_dict.items()} for i in range(self.length)
+        ]
         if self.parallel:
-            [pipe.send(("step", act)) for pipe, act in zip(self.pipes, acts)]
+            [pipe.send(("step", act)) for pipe, act in zip(self.pipes, acts_list)]
             obs_list = [self._receive(pipe) for pipe in self.pipes]
         else:
-            obs_list = [env.step(act) for env, act in zip(self.envs, acts)]
+            obs_list = [env.step(act) for env, act in zip(self.envs, acts_list)]
         obs = {k: np.stack([x[k] for x in obs_list]) for k in obs_list[0].keys()}
         logs = {k: v for k, v in obs.items() if k.startswith("log/")}
         obs = {k: v for k, v in obs.items() if not k.startswith("log/")}

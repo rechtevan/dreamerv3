@@ -17,7 +17,7 @@ def train(make_agent, make_replay, make_env, make_stream, make_logger, args):
     usage = elements.Usage(**args.usage)
     train_agg = elements.Agg()
     epstats = elements.Agg()
-    episodes = collections.defaultdict(elements.Agg)
+    episodes: dict[int, elements.Agg] = collections.defaultdict(elements.Agg)
     policy_fps = elements.FPS()
     train_fps = elements.FPS()
 

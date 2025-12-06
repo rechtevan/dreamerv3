@@ -28,9 +28,9 @@ def train_eval(
     step = logger.step
     usage = elements.Usage(**args.usage)
     agg = elements.Agg()
-    train_episodes = collections.defaultdict(elements.Agg)
+    train_episodes: dict[int, elements.Agg] = collections.defaultdict(elements.Agg)
     train_epstats = elements.Agg()
-    eval_episodes = collections.defaultdict(elements.Agg)
+    eval_episodes: dict[int, elements.Agg] = collections.defaultdict(elements.Agg)
     eval_epstats = elements.Agg()
     policy_fps = elements.FPS()
     train_fps = elements.FPS()

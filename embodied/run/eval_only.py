@@ -78,7 +78,7 @@ def eval_only(make_agent, make_env, make_logger, args):
     usage = elements.Usage(**args.usage)
     agg = elements.Agg()
     epstats = elements.Agg()
-    episodes = defaultdict(elements.Agg)
+    episodes: dict[int, elements.Agg] = defaultdict(elements.Agg)
     should_log = elements.when.Clock(args.log_every)
     policy_fps = elements.FPS()
 

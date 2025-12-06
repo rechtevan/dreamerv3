@@ -1,6 +1,7 @@
 import collections
 import threading
 import time
+import typing
 from functools import partial as bind
 
 import cloudpickle
@@ -78,7 +79,7 @@ def parallel_actor(agent, barrier, args):
     islist = lambda x: isinstance(x, list)
     initial = agent.init_policy(args.actor_batch)
     initial = elements.tree.map(lambda x: x[0], initial, isleaf=islist)
-    carries = collections.defaultdict(lambda: initial)
+    carries: dict[typing.Any, typing.Any] = collections.defaultdict(lambda: initial)
     barrier.wait()  # Do not collect data before learner restored checkpoint.
     fps = elements.FPS()
 
@@ -151,7 +152,7 @@ def parallel_learner(agent, barrier, args):
     barrier.wait()
 
     replays = {}
-    received = collections.defaultdict(int)
+    received: dict[str, int] = collections.defaultdict(int)
 
     def parallel_stream(source, prefetch=2):
         replay = portal.Client(args.replay_addr, f"LearnerReplay{source.title()}")
@@ -393,6 +394,7 @@ def parallel_logger(make_logger, args):
                 epstats.add(result)
 
         for addr, last in list(updated.items()):
+            assert last is not None, "Timestamp should not be None"
             if now - last >= args.episode_timeout:
                 print("Dropping episode statistics due to timeout.")
                 del episodes[addr]
